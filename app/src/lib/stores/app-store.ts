@@ -323,10 +323,15 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
   private wireupStoreEventHandlers() {
     this.gitHubUserStore.onDidUpdate(() => {
+      // with this change we want to refresh the users associated
+      // with the selected repository - this is done in
+      // RepositoryStateCache currently
       this.emitUpdate()
     })
 
     this.cloningRepositoriesStore.onDidUpdate(() => {
+      // with this change we want to refresh the app state if the
+      // selected repository is a cloned repository
       this.emitUpdate()
     })
 
