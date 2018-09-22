@@ -53,8 +53,12 @@ export type PossibleSelections =
     }
   | { type: SelectionType.MissingRepository; repository: Repository }
 
+export type IAppState = INewAppState & IOldAppState
+
+export interface INewAppState {}
+
 /** All of the shared app state. */
-export interface IAppState {
+export interface IOldAppState {
   readonly accounts: ReadonlyArray<Account>
   /**
    * The current list of repositories tracked in the application
