@@ -72,6 +72,9 @@ export type IAppState = INewAppState & IOldAppState
 export interface INewAppState {
   /** Map from the emoji shortcut (e.g., :+1:) to the image's local path. */
   readonly emoji: Map<string, string>
+
+  /** Indicate whether the app should show the welcome wizard. */
+  readonly showWelcomeFlow: boolean
 }
 
 /** All of the shared app state. */
@@ -115,7 +118,6 @@ export interface IOldAppState {
    */
   readonly appIsFocused: boolean
 
-  readonly showWelcomeFlow: boolean
   readonly currentPopup: Popup | null
   readonly currentFoldout: Foldout | null
 

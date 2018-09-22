@@ -170,10 +170,12 @@ import { readEmoji } from '../read-emoji'
 
 const initialState: INewAppState = {
   emoji: new Map<string, string>(),
+  showWelcomeFlow: false,
 }
 
 enum ActionTypes {
   EmojiLoaded = 'EmojiLoaded',
+  ShowWelcomeFlow = 'ShowWelcomeFlow',
 }
 
 type EmojiLoaded = {
@@ -196,7 +198,19 @@ function loadEmoji(): ThunkResult<void> {
   }
 }
 
-type Actions = EmojiLoaded
+type ShowWelcomeFlow = {
+  type: ActionTypes.ShowWelcomeFlow
+  show: boolean
+}
+
+function showWelcomeFlow(show: boolean): ShowWelcomeFlow {
+  return {
+    type: ActionTypes.ShowWelcomeFlow,
+    show,
+  }
+}
+
+type Actions = EmojiLoaded | ShowWelcomeFlow
 
 type AsyncStore = Store<INewAppState, Actions> & {
   dispatch: ThunkDispatch<INewAppState, undefined, Actions>
@@ -211,6 +225,8 @@ function theSimplestReducer(
   switch (action.type) {
     case ActionTypes.EmojiLoaded:
       return { ...state, emoji: action.emoji }
+    case ActionTypes.ShowWelcomeFlow:
+      return { ...state, showWelcomeFlow: action.show }
     default:
       // TODO: how can we verify at compile time that this will handle all expected actions?
       return state
@@ -268,7 +284,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
   /** The ahead/behind updater or the currently selected repository */
   private currentAheadBehindUpdater: AheadBehindUpdater | null = null
 
-  private showWelcomeFlow = false
   private currentPopup: Popup | null = null
   private currentFoldout: Foldout | null = null
   private errors: ReadonlyArray<Error> = new Array<Error>()
@@ -346,8 +361,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
   ) {
     super()
 
-    this.showWelcomeFlow = !hasShownWelcomeFlow()
-
     const window = remote.getCurrentWindow()
     this.windowState = getWindowState(window)
 
@@ -367,6 +380,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
     )
 
     this.store.subscribe(() => this.emitUpdate())
+
+    const show = !hasShownWelcomeFlow()
+    this.store.dispatch(showWelcomeFlow(show))
   }
 
   private wireupIpcEventHandlers(window: Electron.BrowserWindow) {
@@ -519,6 +535,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   public getState(): IAppState {
+    const newState = this.store.getState()
+
+    const { showWelcomeFlow } = newState
+
     const oldState: IOldAppState = {
       accounts: this.accounts,
       repositories: [
@@ -534,11 +554,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
       currentPopup: this.currentPopup,
       currentFoldout: this.currentFoldout,
       errors: this.errors,
-      showWelcomeFlow: this.showWelcomeFlow,
       sidebarWidth: this.sidebarWidth,
       commitSummaryWidth: this.commitSummaryWidth,
       appMenuState: this.appMenu ? this.appMenu.openMenus : [],
-      titleBarStyle: this.showWelcomeFlow ? 'light' : 'dark',
+      titleBarStyle: showWelcomeFlow ? 'light' : 'dark',
       highlightAccessKeys: this.highlightAccessKeys,
       isUpdateAvailableBannerVisible: this.isUpdateAvailableBannerVisible,
       askForConfirmationOnRepositoryRemoval: this.confirmRepoRemoval,
@@ -551,8 +570,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
       selectedBranchesTab: this.selectedBranchesTab,
       selectedTheme: this.selectedTheme,
     }
-
-    const newState = this.store.getState()
 
     return { ...newState, ...oldState }
   }
@@ -2991,9 +3008,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   public _endWelcomeFlow(): Promise<void> {
-    this.showWelcomeFlow = false
-
-    this.emitUpdate()
+    this.store.dispatch(showWelcomeFlow(false))
 
     markWelcomeFlowComplete()
 
