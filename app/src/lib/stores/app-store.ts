@@ -297,9 +297,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
     ILocalRepositoryState
   >()
 
-  /** Map from shortcut (e.g., :+1:) to on disk URL. */
-  private emoji = new Map<string, string>()
-
   /**
    * The Application menu as an AppMenu instance or null if
    * the main process has not yet provided the renderer with
@@ -425,7 +422,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.signInStore.onDidAuthenticate((account, method) => {
       this._addAccount(account)
 
-      if (this.showWelcomeFlow) {
+      const { showWelcomeFlow } = this.store.getState()
+
+      if (showWelcomeFlow) {
         this.statsStore.recordWelcomeWizardSignInMethod(method)
       }
     })
@@ -3007,13 +3006,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
     })
   }
 
-  public _endWelcomeFlow(): Promise<void> {
+  public _endWelcomeFlow() {
     this.store.dispatch(showWelcomeFlow(false))
-
     markWelcomeFlowComplete()
-
     this.statsStore.recordWelcomeWizardTerminated()
-
     return Promise.resolve()
   }
 

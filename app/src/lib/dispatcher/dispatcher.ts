@@ -514,8 +514,8 @@ export class Dispatcher {
   }
 
   /** End the Welcome flow. */
-  public endWelcomeFlow(): Promise<void> {
-    return this.appStore._endWelcomeFlow()
+  public endWelcomeFlow() {
+    this.appStore._endWelcomeFlow()
   }
 
   /**
