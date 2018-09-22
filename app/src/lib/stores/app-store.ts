@@ -85,6 +85,7 @@ import {
   SelectionType,
   MergeResultStatus,
   INewAppState,
+  IOldAppState,
 } from '../app-state'
 import { caseInsensitiveCompare } from '../compare'
 import { IGitHubUser } from '../databases/github-user-database'
@@ -167,49 +168,35 @@ import { readEmoji } from '../read-emoji'
 
 // start new redux code
 
-const initialState: INewAppState = {}
+const initialState: INewAppState = {
+  emoji: new Map<string, string>(),
+}
 
 enum ActionTypes {
-  ShowWelcomeFlowAction = 'ShowWelcomeFlowAction',
-  SetRepositoryFilterText = 'SetRepositoryFilterText',
-  AccountsLoaded = 'AccountsLoaded',
+  EmojiLoaded = 'EmojiLoaded',
 }
 
-type SetFilterRepositoryText = {
-  type: ActionTypes.SetRepositoryFilterText
-  filterText: string
+type EmojiLoaded = {
+  type: ActionTypes.EmojiLoaded
+  emoji: Map<string, string>
 }
 
-function setRepositoryFilterText(filterText: string): SetFilterRepositoryText {
-  return { type: ActionTypes.SetRepositoryFilterText, filterText }
-}
-
-type ShowWelcomeFlowAction = {
-  type: ActionTypes.ShowWelcomeFlowAction
-  show: boolean
-}
-
-function showWelcomeFlow(show: boolean): ShowWelcomeFlowAction {
-  return { type: ActionTypes.ShowWelcomeFlowAction, show }
-}
-
-type AccountsLoaded = {
-  type: ActionTypes.AccountsLoaded
-  accounts: ReadonlyArray<Account>
-}
-
-function accountsLoaded(accounts: ReadonlyArray<Account>): AccountsLoaded {
-  return { type: ActionTypes.AccountsLoaded, accounts }
-}
-
-function loadAccounts(accountsStore: AccountsStore): ThunkResult<void> {
-  return async dispatch => {
-    const accounts = await accountsStore.getAll()
-    dispatch(accountsLoaded(accounts))
+function emojiLoaded(emoji: Map<string, string>): EmojiLoaded {
+  return {
+    type: ActionTypes.EmojiLoaded,
+    emoji,
   }
 }
 
-type Actions = ShowWelcomeFlowAction | SetFilterRepositoryText | AccountsLoaded
+function loadEmoji(): ThunkResult<void> {
+  return async dispatch => {
+    const rootDir = getAppPath()
+    const emoji = await readEmoji(rootDir)
+    dispatch(emojiLoaded(emoji))
+  }
+}
+
+type Actions = EmojiLoaded
 
 type AsyncStore = Store<INewAppState, Actions> & {
   dispatch: ThunkDispatch<INewAppState, undefined, Actions>
@@ -222,22 +209,10 @@ function theSimplestReducer(
   action: Actions
 ): INewAppState {
   switch (action.type) {
-    case ActionTypes.ShowWelcomeFlowAction:
-      return {
-        ...state,
-        showWelcomeFlow: action.show,
-        selectedTheme: action.show
-          ? ApplicationTheme.Light
-          : ApplicationTheme.Dark,
-      }
-    case ActionTypes.SetRepositoryFilterText:
-      return { ...state, repositoryFilterText: action.filterText }
-    case ActionTypes.AccountsLoaded: {
-      // TODO: this is trickier to port over because we have lots
-      // of actions that rely on this.accounts
-      return state
-    }
+    case ActionTypes.EmojiLoaded:
+      return { ...state, emoji: action.emoji }
     default:
+      // TODO: how can we verify at compile time that this will handle all expected actions?
       return state
   }
 }
@@ -384,6 +359,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.wireupStoreEventHandlers()
     getAppMenu()
 
+    // TODO: global error handling that is redux-thunk compatible?
+
     this.store = createStore(
       theSimplestReducer,
       applyMiddleware(thunk as ThunkMiddleware<INewAppState, Actions>)
@@ -460,15 +437,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
   /** Load the emoji from disk. */
   public loadEmoji() {
-    const rootDir = getAppPath()
-    readEmoji(rootDir)
-      .then(emoji => {
-        this.emoji = emoji
-        this.emitUpdate()
-      })
-      .catch(err => {
-        log.warn(`Unexpected issue when trying to read emoji into memory`, err)
-      })
+    this.store.dispatch(loadEmoji())
   }
 
   protected emitUpdate() {
@@ -550,7 +519,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   public getState(): IAppState {
-    return {
+    const oldState: IOldAppState = {
       accounts: this.accounts,
       repositories: [
         ...this.repositories,
@@ -566,7 +535,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
       currentFoldout: this.currentFoldout,
       errors: this.errors,
       showWelcomeFlow: this.showWelcomeFlow,
-      emoji: this.emoji,
       sidebarWidth: this.sidebarWidth,
       commitSummaryWidth: this.commitSummaryWidth,
       appMenuState: this.appMenu ? this.appMenu.openMenus : [],
@@ -583,6 +551,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
       selectedBranchesTab: this.selectedBranchesTab,
       selectedTheme: this.selectedTheme,
     }
+
+    const newState = this.store.getState()
+
+    return { ...newState, ...oldState }
   }
 
   private onGitStoreUpdated(repository: Repository, gitStore: GitStore) {

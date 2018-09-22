@@ -69,7 +69,10 @@ export type PossibleSelections =
 
 export type IAppState = INewAppState & IOldAppState
 
-export interface INewAppState {}
+export interface INewAppState {
+  /** Map from the emoji shortcut (e.g., :+1:) to the image's local path. */
+  readonly emoji: Map<string, string>
+}
 
 /** All of the shared app state. */
 export interface IOldAppState {
@@ -137,9 +140,6 @@ export interface IOldAppState {
   readonly appMenuState: ReadonlyArray<IMenu>
 
   readonly errors: ReadonlyArray<Error>
-
-  /** Map from the emoji shortcut (e.g., :+1:) to the image's local path. */
-  readonly emoji: Map<string, string>
 
   /**
    * The width of the repository sidebar.
