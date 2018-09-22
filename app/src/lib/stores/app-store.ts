@@ -1,3 +1,6 @@
+import { createStore, applyMiddleware, Store } from 'redux'
+import thunk, { ThunkAction, ThunkMiddleware, ThunkDispatch } from 'redux-thunk'
+
 import { ipcRenderer, remote } from 'electron'
 import { pathExists } from 'fs-extra'
 import { escape } from 'querystring'
@@ -81,6 +84,7 @@ import {
   RepositorySectionTab,
   SelectionType,
   MergeResultStatus,
+  INewAppState,
 } from '../app-state'
 import { caseInsensitiveCompare } from '../compare'
 import { IGitHubUser } from '../databases/github-user-database'
@@ -161,6 +165,85 @@ import { validatedRepositoryPath } from './helpers/validated-repository-path'
 import { RepositoryStateCache } from './repository-state-cache'
 import { readEmoji } from '../read-emoji'
 
+// start new redux code
+
+const initialState: INewAppState = {}
+
+enum ActionTypes {
+  ShowWelcomeFlowAction = 'ShowWelcomeFlowAction',
+  SetRepositoryFilterText = 'SetRepositoryFilterText',
+  AccountsLoaded = 'AccountsLoaded',
+}
+
+type SetFilterRepositoryText = {
+  type: ActionTypes.SetRepositoryFilterText
+  filterText: string
+}
+
+function setRepositoryFilterText(filterText: string): SetFilterRepositoryText {
+  return { type: ActionTypes.SetRepositoryFilterText, filterText }
+}
+
+type ShowWelcomeFlowAction = {
+  type: ActionTypes.ShowWelcomeFlowAction
+  show: boolean
+}
+
+function showWelcomeFlow(show: boolean): ShowWelcomeFlowAction {
+  return { type: ActionTypes.ShowWelcomeFlowAction, show }
+}
+
+type AccountsLoaded = {
+  type: ActionTypes.AccountsLoaded
+  accounts: ReadonlyArray<Account>
+}
+
+function accountsLoaded(accounts: ReadonlyArray<Account>): AccountsLoaded {
+  return { type: ActionTypes.AccountsLoaded, accounts }
+}
+
+function loadAccounts(accountsStore: AccountsStore): ThunkResult<void> {
+  return async dispatch => {
+    const accounts = await accountsStore.getAll()
+    dispatch(accountsLoaded(accounts))
+  }
+}
+
+type Actions = ShowWelcomeFlowAction | SetFilterRepositoryText | AccountsLoaded
+
+type AsyncStore = Store<INewAppState, Actions> & {
+  dispatch: ThunkDispatch<INewAppState, undefined, Actions>
+}
+
+type ThunkResult<R> = ThunkAction<R, INewAppState, undefined, Actions>
+
+function theSimplestReducer(
+  state: INewAppState = initialState,
+  action: Actions
+): INewAppState {
+  switch (action.type) {
+    case ActionTypes.ShowWelcomeFlowAction:
+      return {
+        ...state,
+        showWelcomeFlow: action.show,
+        selectedTheme: action.show
+          ? ApplicationTheme.Light
+          : ApplicationTheme.Dark,
+      }
+    case ActionTypes.SetRepositoryFilterText:
+      return { ...state, repositoryFilterText: action.filterText }
+    case ActionTypes.AccountsLoaded: {
+      // TODO: this is trickier to port over because we have lots
+      // of actions that rely on this.accounts
+      return state
+    }
+    default:
+      return state
+  }
+}
+
+// end new redux code
+
 /**
  * As fast-forwarding local branches is proportional to the number of local
  * branches, and is run after every fetch/push/pull, this is skipped when the
@@ -194,6 +277,8 @@ const shellKey = 'shell'
 const BackgroundFetchMinimumInterval = 30 * 60 * 1000
 
 export class AppStore extends TypedBaseStore<IAppState> {
+  private readonly store: AsyncStore
+
   private accounts: ReadonlyArray<Account> = new Array<Account>()
   private repositories: ReadonlyArray<Repository> = new Array<Repository>()
 
@@ -298,6 +383,13 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.wireupIpcEventHandlers(window)
     this.wireupStoreEventHandlers()
     getAppMenu()
+
+    this.store = createStore(
+      theSimplestReducer,
+      applyMiddleware(thunk as ThunkMiddleware<INewAppState, Actions>)
+    )
+
+    this.store.subscribe(() => this.emitUpdate())
   }
 
   private wireupIpcEventHandlers(window: Electron.BrowserWindow) {
