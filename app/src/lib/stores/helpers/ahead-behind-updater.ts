@@ -27,7 +27,7 @@ import { Branch, IAheadBehind } from '../../../models/branch'
 import { ComparisonCache } from '../../comparison-cache'
 
 export class AheadBehindUpdater {
-  private comparisonCache = new ComparisonCache()
+  private readonly comparisonCache = new ComparisonCache()
 
   private aheadBehindQueue = queue({
     concurrency: 1,
@@ -35,14 +35,17 @@ export class AheadBehindUpdater {
   })
 
   public constructor(
-    private repository: Repository,
-    private onCacheUpdate: (cache: ComparisonCache) => void
+    public readonly repository: Repository,
+    private readonly onCacheUpdated: (
+      repository: Repository,
+      cache: ComparisonCache
+    ) => void
   ) {}
 
   public start() {
     this.aheadBehindQueue.on('success', (result: IAheadBehind | null) => {
       if (result != null) {
-        this.onCacheUpdate(this.comparisonCache)
+        this.onCacheUpdated(this.repository, this.comparisonCache)
       }
     })
 

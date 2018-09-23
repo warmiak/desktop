@@ -1,4 +1,11 @@
-import { createStore, applyMiddleware, Store } from 'redux'
+import {
+  createStore,
+  applyMiddleware,
+  Store,
+  Middleware,
+  MiddlewareAPI,
+  Dispatch,
+} from 'redux'
 import thunk, { ThunkAction, ThunkMiddleware, ThunkDispatch } from 'redux-thunk'
 
 import { ipcRenderer, remote } from 'electron'
@@ -96,7 +103,7 @@ import {
   launchExternalEditor,
   parse,
 } from '../editors'
-import { assertNever, fatalError, forceUnwrap } from '../fatal-error'
+import { assertNever, forceUnwrap } from '../fatal-error'
 
 import { findAccountForRemoteURL } from '../find-account'
 import { formatCommitMessage } from '../format-commit-message'
@@ -152,35 +159,45 @@ import { ILaunchStats, StatsStore } from '../stats'
 import { hasShownWelcomeFlow, markWelcomeFlowComplete } from '../welcome'
 import { getWindowState, WindowState } from '../window-state'
 import { TypedBaseStore } from './base-store'
-import { AheadBehindUpdater } from './helpers/ahead-behind-updater'
 import {
   enableRepoInfoIndicators,
   enableMergeConflictDetection,
 } from '../feature-flag'
 import { MergeResultKind } from '../../models/merge'
 import { promiseWithMinimumTimeout } from '../promise'
-import { BackgroundFetcher } from './helpers/background-fetcher'
 import { inferComparisonBranch } from './helpers/infer-comparison-branch'
-import { PullRequestUpdater } from './helpers/pull-request-updater'
 import { validatedRepositoryPath } from './helpers/validated-repository-path'
 import { RepositoryStateCache } from './repository-state-cache'
 import { readEmoji } from '../read-emoji'
+import { createBackgroundFetcherMiddleware } from './middleware/background-fetcher'
+import { createAheadBehindUpdaterMiddleware } from './middleware/ahead-behind-updater'
+import { createPullRequestUpdaterMiddleware } from './middleware/pull-request-updater'
 
 // start new redux code
 
 const initialState: INewAppState = {
+  selectedRepository: null,
   emoji: new Map<string, string>(),
   showWelcomeFlow: false,
 }
 
-enum ActionTypes {
+export enum ActionTypes {
   EmojiLoaded = 'EmojiLoaded',
   ShowWelcomeFlow = 'ShowWelcomeFlow',
+  ClearRepositorySelection = 'ClearRepositorySelection',
+  SelectRepository = 'SelectRepository',
+  UpdateActiveRepository = 'UpdateActiveRepository',
+  UpdateMissingRepository = 'UpdateMissingRepository',
+  UpdateCloningRepository = 'UpdateCloningRepository',
+  InsertAheadBehindComparison = 'InsertAheadBehindComparison',
+  ScheduleAheadBehindComparisons = 'ScheduleAheadBehindComparisons',
+  ClearPendingAheadBehindComparisons = 'ClearPendingAheadBehindComparisons',
+  AddPullRequestToDatabase = 'AddPullRequestToDatabase',
 }
 
 type EmojiLoaded = {
-  type: ActionTypes.EmojiLoaded
-  emoji: Map<string, string>
+  readonly type: ActionTypes.EmojiLoaded
+  readonly emoji: Map<string, string>
 }
 
 function emojiLoaded(emoji: Map<string, string>): EmojiLoaded {
@@ -199,8 +216,8 @@ function loadEmoji(): ThunkResult<void> {
 }
 
 type ShowWelcomeFlow = {
-  type: ActionTypes.ShowWelcomeFlow
-  show: boolean
+  readonly type: ActionTypes.ShowWelcomeFlow
+  readonly show: boolean
 }
 
 function showWelcomeFlow(show: boolean): ShowWelcomeFlow {
@@ -210,7 +227,101 @@ function showWelcomeFlow(show: boolean): ShowWelcomeFlow {
   }
 }
 
-type Actions = EmojiLoaded | ShowWelcomeFlow
+type InsertAheadBehindComparison = {
+  readonly type: ActionTypes.InsertAheadBehindComparison
+  readonly repository: Repository
+  readonly from: string
+  readonly to: string
+  readonly aheadBehind: IAheadBehind
+}
+
+function insertAheadBehindComparison(
+  repository: Repository,
+  from: string,
+  to: string,
+  aheadBehind: IAheadBehind
+): InsertAheadBehindComparison {
+  return {
+    type: ActionTypes.InsertAheadBehindComparison,
+    repository,
+    from,
+    to,
+    aheadBehind,
+  }
+}
+
+type ScheduleComparisons = {
+  readonly type: ActionTypes.ScheduleAheadBehindComparisons
+  readonly repository: Repository
+  readonly currentBranch: Branch
+  readonly defaultBranch: Branch | null
+  readonly recentBranches: ReadonlyArray<Branch>
+  readonly allBranches: ReadonlyArray<Branch>
+}
+
+function scheduleComparisons(
+  repository: Repository,
+  currentBranch: Branch,
+  defaultBranch: Branch | null,
+  recentBranches: ReadonlyArray<Branch>,
+  allBranches: ReadonlyArray<Branch>
+): ScheduleComparisons {
+  return {
+    type: ActionTypes.ScheduleAheadBehindComparisons,
+    repository,
+    currentBranch,
+    defaultBranch,
+    recentBranches,
+    allBranches,
+  }
+}
+
+type ClearPendingAheadBehindComparisons = {
+  readonly type: ActionTypes.ClearPendingAheadBehindComparisons
+  readonly repository: Repository
+}
+
+function clearPendingComparisons(
+  repository: Repository
+): ClearPendingAheadBehindComparisons {
+  return { type: ActionTypes.ClearPendingAheadBehindComparisons, repository }
+}
+
+type AddPullRequestToDatabase = {
+  readonly type: ActionTypes.AddPullRequestToDatabase
+  readonly repository: GitHubRepository
+  readonly pullRequest: PullRequest
+}
+
+function pullRequestWasPushed(
+  repository: GitHubRepository,
+  pullRequest: PullRequest
+): AddPullRequestToDatabase {
+  return { type: ActionTypes.AddPullRequestToDatabase, repository, pullRequest }
+}
+
+type SelectRepository = {
+  readonly type: ActionTypes.SelectRepository
+  readonly repository: Repository | CloningRepository | null
+}
+
+function selectRepository(
+  repository: Repository | CloningRepository | null
+): SelectRepository {
+  return {
+    type: ActionTypes.SelectRepository,
+    repository,
+  }
+}
+
+export type Actions =
+  | EmojiLoaded
+  | ShowWelcomeFlow
+  | SelectRepository
+  | InsertAheadBehindComparison
+  | ScheduleComparisons
+  | ClearPendingAheadBehindComparisons
+  | AddPullRequestToDatabase
 
 type AsyncStore = Store<INewAppState, Actions> & {
   dispatch: ThunkDispatch<INewAppState, undefined, Actions>
@@ -225,12 +336,48 @@ function theSimplestReducer(
   switch (action.type) {
     case ActionTypes.EmojiLoaded:
       return { ...state, emoji: action.emoji }
+
     case ActionTypes.ShowWelcomeFlow:
       return { ...state, showWelcomeFlow: action.show }
+
+    case ActionTypes.SelectRepository:
+      return { ...state, selectedRepository: action.repository }
+
     default:
-      // TODO: how can we verify at compile time that this will handle all expected actions?
       return state
   }
+}
+
+function logger() {
+  const loggerMiddleware: Middleware = api => (next: Dispatch) => action => {
+    console.debug('will dispatch', action)
+
+    // Call the next dispatch method in the middleware chain.
+    const returnValue = next(action)
+
+    console.debug('state after dispatch', api.getState())
+
+    // This will likely be the action itself, unless
+    // a middleware further in chain changed it.
+    return returnValue
+  }
+
+  return loggerMiddleware
+}
+
+function crashReporter<D, S>() {
+  const crashReporterMiddleware: Middleware<D, S> = ({
+    getState,
+  }: MiddlewareAPI) => (next: Dispatch) => action => {
+    try {
+      return next(action)
+    } catch (err) {
+      console.error('Caught an exception!', err)
+      throw err
+    }
+  }
+
+  return crashReporterMiddleware
 }
 
 // end new redux code
@@ -272,17 +419,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
   private accounts: ReadonlyArray<Account> = new Array<Account>()
   private repositories: ReadonlyArray<Repository> = new Array<Repository>()
-
-  private selectedRepository: Repository | CloningRepository | null = null
-
-  /** The background fetcher for the currently selected repository. */
-  private currentBackgroundFetcher: BackgroundFetcher | null = null
-
-  /** The pull request updater for the currently selected repository */
-  private currentPullRequestUpdater: PullRequestUpdater | null = null
-
-  /** The ahead/behind updater or the currently selected repository */
-  private currentAheadBehindUpdater: AheadBehindUpdater | null = null
 
   private currentPopup: Popup | null = null
   private currentFoldout: Foldout | null = null
@@ -373,10 +509,36 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
     this.store = createStore(
       theSimplestReducer,
-      applyMiddleware(thunk as ThunkMiddleware<INewAppState, Actions>)
+      applyMiddleware(
+        thunk as ThunkMiddleware<INewAppState, Actions>,
+        // helper middleware in development to monitor state changes
+        logger(),
+        // generic crash handling to help catch bad things
+        crashReporter(),
+        // middleware to manage state that was previous handled by AppStore
+        createBackgroundFetcherMiddleware(
+          repository => getAccountForRepository(this.accounts, repository),
+          r => this.shouldBackgroundFetch(r, null),
+          (r, a) => this.performFetch(r, a, FetchType.BackgroundTask)
+        ),
+        createAheadBehindUpdaterMiddleware((r, aheadBehindCache) => {
+          this.repositoryStateCache.updateCompareState(r, () => ({
+            aheadBehindCache,
+          }))
+          this.emitUpdate()
+        }),
+        createPullRequestUpdaterMiddleware(
+          repository => getAccountForRepository(this.accounts, repository),
+          (r, a) => this.pullRequestStore.fetchAndCachePullRequests(r, a),
+          r => this.pullRequestStore.fetchPullRequestsFromCache(r),
+          (g, a) => this.pullRequestStore.fetchPullRequestStatuses(g, a)
+        )
+      )
     )
 
-    this.store.subscribe(() => this.emitUpdate())
+    this.store.subscribe(() => {
+      this.emitUpdate()
+    })
 
     const show = !hasShownWelcomeFlow()
     this.store.dispatch(showWelcomeFlow(show))
@@ -499,14 +661,14 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   private getSelectedState(): PossibleSelections | null {
-    const repository = this.selectedRepository
-    if (!repository) {
+    const { selectedRepository } = this.store.getState()
+    if (!selectedRepository) {
       return null
     }
 
-    if (repository instanceof CloningRepository) {
+    if (selectedRepository instanceof CloningRepository) {
       const progress = this.cloningRepositoriesStore.getRepositoryState(
-        repository
+        selectedRepository
       )
       if (!progress) {
         return null
@@ -514,22 +676,22 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
       return {
         type: SelectionType.CloningRepository,
-        repository,
+        repository: selectedRepository,
         progress,
       }
     }
 
-    if (repository.missing) {
+    if (selectedRepository.missing) {
       return {
         type: SelectionType.MissingRepository,
-        repository,
+        repository: selectedRepository,
       }
     }
 
     return {
       type: SelectionType.Repository,
-      repository,
-      state: this.repositoryStateCache.get(repository),
+      repository: selectedRepository,
+      state: this.repositoryStateCache.get(selectedRepository),
     }
   }
 
@@ -669,38 +831,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
     if (selectedSHA == null && commitSHAs.length > 0) {
       this._changeCommitSelection(repository, commitSHAs[0])
       this._loadChangedFilesForCurrentSelection(repository)
-    }
-  }
-
-  private startAheadBehindUpdater(repository: Repository) {
-    if (this.currentAheadBehindUpdater != null) {
-      fatalError(
-        `An ahead/behind updater is already active and cannot start updating on ${
-          repository.name
-        }`
-      )
-
-      return
-    }
-
-    const updater = new AheadBehindUpdater(repository, aheadBehindCache => {
-      this.repositoryStateCache.updateCompareState(repository, () => ({
-        aheadBehindCache,
-      }))
-      this.emitUpdate()
-    })
-
-    this.currentAheadBehindUpdater = updater
-
-    this.currentAheadBehindUpdater.start()
-  }
-
-  private stopAheadBehindUpdate() {
-    const updater = this.currentAheadBehindUpdater
-
-    if (updater != null) {
-      updater.stop()
-      this.currentAheadBehindUpdater = null
     }
   }
 
@@ -907,7 +1037,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       currentSha = tip.currentSha
     }
 
-    if (this.currentAheadBehindUpdater != null && currentSha != null) {
+    if (currentSha != null) {
       const from =
         action.mode === ComparisonView.Ahead
           ? comparisonBranch.tip.sha
@@ -917,7 +1047,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
           ? currentSha
           : comparisonBranch.tip.sha
 
-      this.currentAheadBehindUpdater.insert(from, to, aheadBehind)
+      this.store.dispatch(
+        insertAheadBehindComparison(repository, from, to, aheadBehind)
+      )
     }
 
     if (!enableMergeConflictDetection()) {
@@ -998,21 +1130,20 @@ export class AppStore extends TypedBaseStore<IAppState> {
       return
     }
 
-    if (this.currentAheadBehindUpdater === null) {
-      return
-    }
-
     if (compareState.showBranchList) {
       const currentBranch = branchesState.tip.branch
 
-      this.currentAheadBehindUpdater.schedule(
-        currentBranch,
-        compareState.defaultBranch,
-        compareState.recentBranches,
-        compareState.allBranches
+      this.store.dispatch(
+        scheduleComparisons(
+          repository,
+          currentBranch,
+          compareState.defaultBranch,
+          compareState.recentBranches,
+          compareState.allBranches
+        )
       )
     } else {
-      this.currentAheadBehindUpdater.clear()
+      this.store.dispatch(clearPendingComparisons(repository))
     }
   }
 
@@ -1163,19 +1294,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
   public async _selectRepository(
     repository: Repository | CloningRepository | null
   ): Promise<Repository | null> {
-    const previouslySelectedRepository = this.selectedRepository
-
-    this.selectedRepository = repository
+    this.store.dispatch(selectRepository(repository))
 
     this.emitUpdate()
-    this.stopBackgroundFetching()
-    this.stopPullRequestUpdater()
 
-    if (repository == null) {
-      return Promise.resolve(null)
-    }
-
-    if (!(repository instanceof Repository)) {
+    if (repository == null || repository instanceof CloningRepository) {
       return Promise.resolve(null)
     }
 
@@ -1221,22 +1344,17 @@ export class AppStore extends TypedBaseStore<IAppState> {
       })
     }
 
+    const { selectedRepository } = this.store.getState()
+
     // The selected repository could have changed while we were refreshing.
-    if (this.selectedRepository !== repository) {
+    if (selectedRepository !== repository) {
       return null
     }
 
     // "Clone in Desktop" from a cold start can trigger this twice, and
     // for edge cases where _selectRepository is re-entract, calling this here
     // ensures we clean up the existing background fetcher correctly (if set)
-    this.stopBackgroundFetching()
-    this.stopPullRequestUpdater()
-    this.stopAheadBehindUpdate()
 
-    this.startBackgroundFetching(repository, !previouslySelectedRepository)
-    this.startPullRequestUpdater(repository)
-
-    this.startAheadBehindUpdater(repository)
     this.refreshMentionables(repository)
 
     this.addUpstreamRemoteIfNeeded(repository)
@@ -1257,14 +1375,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }
   }
 
-  private stopBackgroundFetching() {
-    const backgroundFetcher = this.currentBackgroundFetcher
-    if (backgroundFetcher) {
-      backgroundFetcher.stop()
-      this.currentBackgroundFetcher = null
-    }
-  }
-
   private refreshMentionables(repository: Repository) {
     const account = getAccountForRepository(this.accounts, repository)
     if (!account) {
@@ -1277,46 +1387,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }
 
     this.gitHubUserStore.updateMentionables(gitHubRepository, account)
-  }
-
-  private startPullRequestUpdater(repository: Repository) {
-    if (this.currentPullRequestUpdater) {
-      fatalError(
-        `A pull request updater is already active and cannot start updating on ${nameOf(
-          repository
-        )}`
-      )
-
-      return
-    }
-
-    if (!repository.gitHubRepository) {
-      return
-    }
-
-    const account = getAccountForRepository(this.accounts, repository)
-
-    if (!account) {
-      return
-    }
-
-    const updater = new PullRequestUpdater(
-      repository,
-      account,
-      this.pullRequestStore
-    )
-    this.currentPullRequestUpdater = updater
-
-    this.currentPullRequestUpdater.start()
-  }
-
-  private stopPullRequestUpdater() {
-    const updater = this.currentPullRequestUpdater
-
-    if (updater) {
-      updater.stop()
-      this.currentPullRequestUpdater = null
-    }
   }
 
   private shouldBackgroundFetch(
@@ -1356,40 +1426,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
     )
 
     return false
-  }
-
-  private startBackgroundFetching(
-    repository: Repository,
-    withInitialSkew: boolean
-  ) {
-    if (this.currentBackgroundFetcher) {
-      fatalError(
-        `We should only have on background fetcher active at once, but we're trying to start background fetching on ${
-          repository.name
-        } while another background fetcher is still active!`
-      )
-      return
-    }
-
-    const account = getAccountForRepository(this.accounts, repository)
-    if (!account) {
-      return
-    }
-
-    if (!repository.gitHubRepository) {
-      return
-    }
-
-    // Todo: add logic to background checker to check the API before fetching
-    // similar to what's being done in `refreshAllIndicators`
-    const fetcher = new BackgroundFetcher(
-      repository,
-      account,
-      r => this.performFetch(r, account, FetchType.BackgroundTask),
-      r => this.shouldBackgroundFetch(r, null)
-    )
-    fetcher.start(withInitialSkew)
-    this.currentBackgroundFetcher = fetcher
   }
 
   /** Load the initial state for the app. */
@@ -1540,9 +1576,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   private updateRepositorySelectionAfterRepositoriesChanged() {
-    const selectedRepository = this.selectedRepository
-    let newSelectedRepository: Repository | CloningRepository | null = this
-      .selectedRepository
+    const state = this.store.getState()
+    const selectedRepository = state.selectedRepository
+    let newSelectedRepository: Repository | CloningRepository | null =
+      state.selectedRepository
     if (selectedRepository) {
       const r =
         this.repositories.find(
@@ -2166,7 +2203,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
   ) {
     this.repositoryStateCache.update(repository, () => ({ checkoutProgress }))
 
-    if (this.selectedRepository === repository) {
+    const { selectedRepository } = this.store.getState()
+
+    if (selectedRepository === repository) {
       this.emitUpdate()
     }
   }
@@ -2393,7 +2432,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
       pushPullFetchProgress,
     }))
 
-    if (this.selectedRepository === repository) {
+    const { selectedRepository } = this.store.getState()
+    if (selectedRepository === repository) {
       this.emitUpdate()
     }
   }
@@ -2514,15 +2554,12 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
         this.updatePushPullFetchProgress(repository, null)
 
-        const prUpdater = this.currentPullRequestUpdater
-        if (prUpdater) {
-          const state = this.repositoryStateCache.get(repository)
-          const currentPR = state.branchesState.currentPullRequest
-          const gitHubRepository = repository.gitHubRepository
+        const currentState = this.repositoryStateCache.get(repository)
+        const currentPR = currentState.branchesState.currentPullRequest
+        const gitHubRepository = repository.gitHubRepository
 
-          if (currentPR && gitHubRepository) {
-            prUpdater.didPushPullRequest(currentPR)
-          }
+        if (currentPR && gitHubRepository) {
+          this.store.dispatch(pullRequestWasPushed(gitHubRepository, currentPR))
         }
 
         const { accounts } = this.getState()
@@ -3538,7 +3575,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
       revertProgress: progress,
     }))
 
-    if (this.selectedRepository === repository) {
+    const { selectedRepository } = this.store.getState()
+
+    if (selectedRepository === repository) {
       this.emitUpdate()
     }
   }

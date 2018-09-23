@@ -70,6 +70,9 @@ export type PossibleSelections =
 export type IAppState = INewAppState & IOldAppState
 
 export interface INewAppState {
+  /** internal state from AppStore that is used in a bunch of places */
+  readonly selectedRepository: Repository | CloningRepository | null
+
   /** Map from the emoji shortcut (e.g., :+1:) to the image's local path. */
   readonly emoji: Map<string, string>
 

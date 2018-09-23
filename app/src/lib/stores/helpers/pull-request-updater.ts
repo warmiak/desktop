@@ -1,8 +1,8 @@
-import { PullRequestStore } from '../pull-request-store'
 import { Account } from '../../../models/account'
 import { fatalError, forceUnwrap } from '../../fatal-error'
 import { PullRequest } from '../../../models/pull-request'
 import { Repository } from '../../../models/repository'
+import { GitHubRepository } from '../../../models/github-repository'
 
 //** Interval to check for pull requests */
 const PullRequestInterval = 1000 * 60 * 10
@@ -24,24 +24,26 @@ enum TimeoutHandles {
  * and status info from GitHub.
  */
 export class PullRequestUpdater {
-  private readonly repository: Repository
-  private readonly account: Account
-  private readonly store: PullRequestStore
-
   private readonly timeoutHandles = new Map<TimeoutHandles, number>()
   private isStopped: boolean = true
 
   private currentPullRequests: ReadonlyArray<PullRequest> = []
 
   public constructor(
-    repository: Repository,
-    account: Account,
-    pullRequestStore: PullRequestStore
-  ) {
-    this.repository = repository
-    this.account = account
-    this.store = pullRequestStore
-  }
+    public readonly repository: Repository,
+    private readonly account: Account,
+    private readonly fetchAndCachePullRequests: (
+      repository: Repository,
+      account: Account
+    ) => void,
+    private readonly fetchPullRequestsFromCache: (
+      repository: GitHubRepository
+    ) => Promise<ReadonlyArray<PullRequest>>,
+    private readonly fetchPullRequestStatuses: (
+      gitHubRepository: GitHubRepository,
+      account: Account
+    ) => void
+  ) {}
 
   /** Starts the updater */
   public start() {
@@ -62,14 +64,14 @@ export class PullRequestUpdater {
       TimeoutHandles.PullRequest,
 
       window.setTimeout(() => {
-        this.store.fetchAndCachePullRequests(this.repository, this.account)
+        this.fetchAndCachePullRequests(this.repository, this.account)
       }, PullRequestInterval)
     )
 
     this.timeoutHandles.set(
       TimeoutHandles.Status,
       window.setTimeout(() => {
-        this.store.fetchPullRequestStatuses(githubRepo, this.account)
+        this.fetchPullRequestStatuses(githubRepo, this.account)
       }, StatusInterval)
     )
   }
@@ -112,8 +114,8 @@ export class PullRequestUpdater {
       this.repository.gitHubRepository
     )
 
-    await this.store.fetchPullRequestStatuses(githubRepo, this.account)
-    const prs = await this.store.fetchPullRequestsFromCache(githubRepo)
+    await this.fetchPullRequestStatuses(githubRepo, this.account)
+    const prs = await this.fetchPullRequestsFromCache(githubRepo)
 
     for (const pr of prs) {
       const status = pr.status
