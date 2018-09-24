@@ -308,6 +308,10 @@ type SelectRepository = {
 function selectRepository(
   repository: Repository | CloningRepository | null
 ): SelectRepository {
+  if (repository !== null && repository instanceof Repository) {
+    localStorage.setItem(LastSelectedRepositoryIDKey, repository.id.toString())
+  }
+
   return {
     type: ActionTypes.SelectRepository,
     repository,
@@ -1296,13 +1300,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
   ): Promise<Repository | null> {
     this.store.dispatch(selectRepository(repository))
 
-    this.emitUpdate()
-
     if (repository == null || repository instanceof CloningRepository) {
       return Promise.resolve(null)
     }
-
-    localStorage.setItem(LastSelectedRepositoryIDKey, repository.id.toString())
 
     if (repository.missing) {
       // as the repository is no longer found on disk, cleaning this up
