@@ -1314,9 +1314,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
     this._refreshRepository(repository)
 
-    const gitHubRepository = repository.gitHubRepository
+    const { gitHubRepository } = repository
 
-    if (gitHubRepository != null) {
+    if (gitHubRepository !== null) {
       this._refreshIssues(gitHubRepository)
       this.loadPullRequests(repository, async () => {
         const promiseForPRs = this.pullRequestStore.fetchPullRequestsFromCache(
@@ -1576,10 +1576,12 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   private updateRepositorySelectionAfterRepositoriesChanged() {
-    const state = this.store.getState()
-    const selectedRepository = state.selectedRepository
-    let newSelectedRepository: Repository | CloningRepository | null =
-      state.selectedRepository
+    const { selectedRepository } = this.store.getState()
+    let newSelectedRepository:
+      | Repository
+      | CloningRepository
+      | null = selectedRepository
+
     if (selectedRepository) {
       const r =
         this.repositories.find(
