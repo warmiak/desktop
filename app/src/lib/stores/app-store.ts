@@ -93,6 +93,10 @@ import {
   MergeResultStatus,
   INewAppState,
   IOldAppState,
+  IRepositoryState,
+  ICompareState,
+  IChangesState,
+  IBranchesState,
 } from '../app-state'
 import { caseInsensitiveCompare } from '../compare'
 import { IGitHubUser } from '../databases/github-user-database'
@@ -177,6 +181,7 @@ import { createPullRequestUpdaterMiddleware } from './middleware/pull-request-up
 
 const initialState: INewAppState = {
   selectedRepository: null,
+  selectedState: null,
   emoji: new Map<string, string>(),
   showWelcomeFlow: false,
   currentPopup: null,
@@ -188,6 +193,7 @@ export enum ActionTypes {
   ShowWelcomeFlow = 'ShowWelcomeFlow',
   ClearRepositorySelection = 'ClearRepositorySelection',
   SelectRepository = 'SelectRepository',
+  UpdateSelectedRepositoryState = 'UpdateSelectedRepositoryState',
   UpdateActiveRepository = 'UpdateActiveRepository',
   UpdateMissingRepository = 'UpdateMissingRepository',
   UpdateCloningRepository = 'UpdateCloningRepository',
@@ -313,15 +319,93 @@ type SelectRepository = {
 }
 
 function selectRepository(
-  repository: Repository | CloningRepository | null
-): SelectRepository {
-  if (repository !== null && repository instanceof Repository) {
-    localStorage.setItem(LastSelectedRepositoryIDKey, repository.id.toString())
-  }
+  repository: Repository | CloningRepository | null,
+  cloningRepositoriesStore: CloningRepositoriesStore,
+  repositoryStateCache: RepositoryStateCache
+): ThunkResult<void> {
+  return (dispatch, getState) => {
+    if (repository !== null && repository instanceof Repository) {
+      localStorage.setItem(
+        LastSelectedRepositoryIDKey,
+        repository.id.toString()
+      )
+    }
 
-  return {
-    type: ActionTypes.SelectRepository,
-    repository,
+    dispatch({
+      type: ActionTypes.SelectRepository,
+      repository,
+    })
+
+    dispatch(
+      recomputeSelectedRepository(
+        cloningRepositoriesStore,
+        repositoryStateCache
+      )
+    )
+  }
+}
+
+type UpdateSelectedRepositoryState = {
+  readonly type: ActionTypes.UpdateSelectedRepositoryState
+  readonly selectedState: PossibleSelections | null
+}
+
+function recomputeSelectedRepository(
+  cloningRepositoriesStore: CloningRepositoriesStore,
+  repositoryStateCache: RepositoryStateCache
+): ThunkResult<void> {
+  return (dispatch, getState) => {
+    const { selectedRepository } = getState()
+    if (selectedRepository === null) {
+      dispatch({
+        type: ActionTypes.UpdateSelectedRepositoryState,
+        selectedState: null,
+      })
+      return
+    }
+
+    if (selectedRepository instanceof CloningRepository) {
+      const progress = cloningRepositoriesStore.getRepositoryState(
+        selectedRepository
+      )
+      if (progress === null) {
+        dispatch({
+          type: ActionTypes.UpdateSelectedRepositoryState,
+          selectedState: null,
+        })
+        return
+      }
+
+      dispatch({
+        type: ActionTypes.UpdateSelectedRepositoryState,
+        selectedState: {
+          type: SelectionType.CloningRepository,
+          repository: selectedRepository,
+          progress,
+        },
+      })
+      return
+    }
+
+    if (selectedRepository.missing) {
+      dispatch({
+        type: ActionTypes.UpdateSelectedRepositoryState,
+        selectedState: {
+          type: SelectionType.MissingRepository,
+          repository: selectedRepository,
+        },
+      })
+      return
+    }
+
+    dispatch({
+      type: ActionTypes.UpdateSelectedRepositoryState,
+      selectedState: {
+        type: SelectionType.Repository,
+        repository: selectedRepository,
+        state: repositoryStateCache.get(selectedRepository),
+      },
+    })
   }
 }
 
@@ -397,6 +481,7 @@ export type Actions =
   | EmojiLoaded
   | ShowWelcomeFlow
   | SelectRepository
+  | UpdateSelectedRepositoryState
   | InsertAheadBehindComparison
   | ScheduleComparisons
   | ClearPendingAheadBehindComparisons
@@ -426,6 +511,9 @@ function theSimplestReducer(
 
     case ActionTypes.SelectRepository:
       return { ...state, selectedRepository: action.repository }
+
+    case ActionTypes.UpdateSelectedRepositoryState:
+      return { ...state, selectedState: action.selectedState }
 
     case ActionTypes.ShowPopup:
       return { ...state, currentPopup: action.popup }
@@ -616,10 +704,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
           (r, a) => this.performFetch(r, a, FetchType.BackgroundTask)
         ),
         createAheadBehindUpdaterMiddleware((r, aheadBehindCache) => {
-          this.repositoryStateCache.updateCompareState(r, () => ({
-            aheadBehindCache,
-          }))
-          this.emitUpdate()
+          this.store.dispatch(
+            this.updateCompareStateAndMaybeRender(r, () => ({
+              aheadBehindCache,
+            }))
+          )
         }),
         createPullRequestUpdaterMiddleware(
           repository => getAccountForRepository(this.accounts, repository),
@@ -636,6 +725,90 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
     const show = !hasShownWelcomeFlow()
     this.store.dispatch(showWelcomeFlow(show))
+  }
+
+  // NOTE: these are plumbing methods because of how these actions depend on
+  // instance members of AppStore. I'd love to _not_ have to do this at some
+  // point but for now this moves me along and eliminates a bunch of
+  // duplicated "do stuff, then emit update" boilerplate code
+  private updateAndMaybeRender<K extends keyof IRepositoryState>(
+    repository: Repository,
+    fn: (state: IRepositoryState) => Pick<IRepositoryState, K>
+  ): ThunkResult<void> {
+    return (dispatch, getState) => {
+      this.repositoryStateCache.update(repository, fn)
+
+      const { selectedRepository } = getState()
+
+      if (selectedRepository === repository) {
+        dispatch(
+          recomputeSelectedRepository(
+            this.cloningRepositoriesStore,
+            this.repositoryStateCache
+          )
+        )
+      }
+    }
+  }
+
+  private updateCompareStateAndMaybeRender<K extends keyof ICompareState>(
+    repository: Repository,
+    fn: (state: ICompareState) => Pick<ICompareState, K>
+  ): ThunkResult<void> {
+    return (dispatch, getState) => {
+      this.repositoryStateCache.updateCompareState(repository, fn)
+
+      const { selectedRepository } = getState()
+
+      if (selectedRepository === repository) {
+        dispatch(
+          recomputeSelectedRepository(
+            this.cloningRepositoriesStore,
+            this.repositoryStateCache
+          )
+        )
+      }
+    }
+  }
+
+  private updateChangesStateAndMaybeRender<K extends keyof IChangesState>(
+    repository: Repository,
+    fn: (state: IChangesState) => Pick<IChangesState, K>
+  ): ThunkResult<void> {
+    return (dispatch, getState) => {
+      this.repositoryStateCache.updateChangesState(repository, fn)
+
+      const { selectedRepository } = getState()
+
+      if (selectedRepository === repository) {
+        dispatch(
+          recomputeSelectedRepository(
+            this.cloningRepositoriesStore,
+            this.repositoryStateCache
+          )
+        )
+      }
+    }
+  }
+
+  private updateBranchesStateAndMaybeRender<K extends keyof IBranchesState>(
+    repository: Repository,
+    fn: (state: IBranchesState) => Pick<IBranchesState, K>
+  ): ThunkResult<void> {
+    return (dispatch, getState) => {
+      this.repositoryStateCache.updateBranchesState(repository, fn)
+
+      const { selectedRepository } = getState()
+
+      if (selectedRepository === repository) {
+        dispatch(
+          recomputeSelectedRepository(
+            this.cloningRepositoriesStore,
+            this.repositoryStateCache
+          )
+        )
+      }
+    }
   }
 
   private wireupIpcEventHandlers(window: Electron.BrowserWindow) {
@@ -754,41 +927,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }
   }
 
-  private getSelectedState(): PossibleSelections | null {
-    const { selectedRepository } = this.store.getState()
-    if (!selectedRepository) {
-      return null
-    }
-
-    if (selectedRepository instanceof CloningRepository) {
-      const progress = this.cloningRepositoriesStore.getRepositoryState(
-        selectedRepository
-      )
-      if (!progress) {
-        return null
-      }
-
-      return {
-        type: SelectionType.CloningRepository,
-        repository: selectedRepository,
-        progress,
-      }
-    }
-
-    if (selectedRepository.missing) {
-      return {
-        type: SelectionType.MissingRepository,
-        repository: selectedRepository,
-      }
-    }
-
-    return {
-      type: SelectionType.Repository,
-      repository: selectedRepository,
-      state: this.repositoryStateCache.get(selectedRepository),
-    }
-  }
-
   public getState(): IAppState {
     const newState = this.store.getState()
 
@@ -804,7 +942,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
       windowState: this.windowState,
       windowZoomFactor: this.windowZoomFactor,
       appIsFocused: this.appIsFocused,
-      selectedState: this.getSelectedState(),
       signInState: this.signInStore.getState(),
       errors: this.errors,
       sidebarWidth: this.sidebarWidth,
@@ -828,29 +965,33 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   private onGitStoreUpdated(repository: Repository, gitStore: GitStore) {
-    this.repositoryStateCache.updateBranchesState(repository, () => ({
-      tip: gitStore.tip,
-      defaultBranch: gitStore.defaultBranch,
-      allBranches: gitStore.allBranches,
-      recentBranches: gitStore.recentBranches,
-    }))
+    this.store.dispatch(
+      this.updateBranchesStateAndMaybeRender(repository, () => ({
+        tip: gitStore.tip,
+        defaultBranch: gitStore.defaultBranch,
+        allBranches: gitStore.allBranches,
+        recentBranches: gitStore.recentBranches,
+      }))
+    )
 
-    this.repositoryStateCache.updateChangesState(repository, () => ({
-      commitMessage: gitStore.commitMessage,
-      contextualCommitMessage: gitStore.contextualCommitMessage,
-      showCoAuthoredBy: gitStore.showCoAuthoredBy,
-      coAuthors: gitStore.coAuthors,
-    }))
+    this.store.dispatch(
+      this.updateChangesStateAndMaybeRender(repository, () => ({
+        commitMessage: gitStore.commitMessage,
+        contextualCommitMessage: gitStore.contextualCommitMessage,
+        showCoAuthoredBy: gitStore.showCoAuthoredBy,
+        coAuthors: gitStore.coAuthors,
+      }))
+    )
 
-    this.repositoryStateCache.update(repository, () => ({
-      commitLookup: gitStore.commitLookup,
-      localCommitSHAs: gitStore.localCommitSHAs,
-      aheadBehind: gitStore.aheadBehind,
-      remote: gitStore.remote,
-      lastFetched: gitStore.lastFetched,
-    }))
-
-    this.emitUpdate()
+    this.store.dispatch(
+      this.updateAndMaybeRender(repository, () => ({
+        commitLookup: gitStore.commitLookup,
+        localCommitSHAs: gitStore.localCommitSHAs,
+        aheadBehind: gitStore.aheadBehind,
+        remote: gitStore.remote,
+        lastFetched: gitStore.lastFetched,
+      }))
+    )
   }
 
   private removeGitStore(repository: Repository) {
@@ -876,14 +1017,16 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   private clearSelectedCommit(repository: Repository) {
-    this.repositoryStateCache.update(repository, () => ({
-      commitSelection: {
-        sha: null,
-        file: null,
-        changedFiles: [],
-        diff: null,
-      },
-    }))
+    this.store.dispatch(
+      this.updateAndMaybeRender(repository, () => ({
+        commitSelection: {
+          sha: null,
+          file: null,
+          changedFiles: [],
+          diff: null,
+        },
+      }))
+    )
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
@@ -891,15 +1034,17 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     sha: string
   ): Promise<void> {
-    this.repositoryStateCache.update(repository, state => {
-      const commitChanged = state.commitSelection.sha !== sha
-      const changedFiles = commitChanged
-        ? new Array<CommittedFileChange>()
-        : state.commitSelection.changedFiles
-      const file = commitChanged ? null : state.commitSelection.file
-      const commitSelection = { sha, file, diff: null, changedFiles }
-      return { commitSelection }
-    })
+    this.store.dispatch(
+      this.updateAndMaybeRender(repository, state => {
+        const commitChanged = state.commitSelection.sha !== sha
+        const changedFiles = commitChanged
+          ? new Array<CommittedFileChange>()
+          : state.commitSelection.changedFiles
+        const file = commitChanged ? null : state.commitSelection.file
+        const commitSelection = { sha, file, diff: null, changedFiles }
+        return { commitSelection }
+      })
+    )
 
     this.emitUpdate()
   }
@@ -978,15 +1123,17 @@ export class AppStore extends TypedBaseStore<IAppState> {
       }
     }
 
-    this.repositoryStateCache.updateCompareState(repository, () => ({
-      allBranches,
-      recentBranches,
-      defaultBranch,
-      inferredComparisonBranch: {
-        branch: inferredBranch,
-        aheadBehind: aheadBehindOfInferredBranch,
-      },
-    }))
+    this.store.dispatch(
+      this.updateCompareStateAndMaybeRender(repository, () => ({
+        allBranches,
+        recentBranches,
+        defaultBranch,
+        inferredComparisonBranch: {
+          branch: inferredBranch,
+          aheadBehind: aheadBehindOfInferredBranch,
+        },
+      }))
+    )
 
     if (inferredBranch !== null) {
       const currentCount = getBehindOrDefault(aheadBehindOfInferredBranch)
@@ -1057,15 +1204,24 @@ export class AppStore extends TypedBaseStore<IAppState> {
         return
       }
 
-      this.repositoryStateCache.updateCompareState(repository, () => ({
-        tip: currentSha,
-        formState: {
-          kind: ComparisonView.None,
-        },
-        commitSHAs: commits,
-        filterText: '',
-        showBranchList: false,
-      }))
+      this.store.dispatch(
+        this.updateAndMaybeRender(repository, () => ({
+          commitLookup: gitStore.commitLookup,
+        }))
+      )
+
+      this.store.dispatch(
+        this.updateCompareStateAndMaybeRender(repository, () => ({
+          tip: currentSha,
+          formState: {
+            kind: ComparisonView.None,
+          },
+          commitSHAs: commits,
+          filterText: '',
+          showBranchList: false,
+        }))
+      )
+
       this.updateOrSelectFirstCommit(repository, commits)
 
       return this.emitUpdate()
@@ -1109,15 +1265,17 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
     const commitSHAs = compare.commits.map(commit => commit.sha)
 
-    this.repositoryStateCache.updateCompareState(repository, s => ({
-      formState: {
-        comparisonBranch,
-        kind: action.mode,
-        aheadBehind,
-      },
-      filterText: comparisonBranch.name,
-      commitSHAs,
-    }))
+    this.store.dispatch(
+      this.updateCompareStateAndMaybeRender(repository, s => ({
+        formState: {
+          comparisonBranch,
+          kind: action.mode,
+          aheadBehind,
+        },
+        filterText: comparisonBranch.name,
+        commitSHAs,
+      }))
+    )
 
     const tip = gitStore.tip
 
@@ -1148,11 +1306,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
       this.updateOrSelectFirstCommit(repository, commitSHAs)
       return this.emitUpdate()
     } else {
-      this.repositoryStateCache.updateCompareState(repository, () => ({
-        mergeStatus: { kind: MergeResultKind.Loading },
-      }))
-
-      this.emitUpdate()
+      this.store.dispatch(
+        this.updateCompareStateAndMaybeRender(repository, () => ({
+          mergeStatus: { kind: MergeResultKind.Loading },
+        }))
+      )
 
       this.updateOrSelectFirstCommit(repository, commitSHAs)
 
@@ -1175,11 +1333,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
             return null
           })
           .then(mergeStatus => {
-            this.repositoryStateCache.updateCompareState(repository, () => ({
-              mergeStatus,
-            }))
-
-            this.emitUpdate()
+            this.store.dispatch(
+              this.updateCompareStateAndMaybeRender(repository, () => ({
+                mergeStatus,
+              }))
+            )
           })
 
         const cleanup = () => {
@@ -1194,9 +1352,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
         return this.currentMergeTreePromise
       } else {
-        this.repositoryStateCache.updateCompareState(repository, () => ({
-          mergeStatus: null,
-        }))
+        this.store.dispatch(
+          this.updateCompareStateAndMaybeRender(repository, () => ({
+            mergeStatus: null,
+          }))
+        )
 
         return this.emitUpdate()
       }
@@ -1208,9 +1368,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     newState: Pick<ICompareFormUpdate, K>
   ) {
-    this.repositoryStateCache.updateCompareState(repository, state => {
-      return merge(state, newState)
-    })
+    this.store.dispatch(
+      this.updateCompareStateAndMaybeRender(repository, state => {
+        return merge(state, newState)
+      })
+    )
 
     this.emitUpdate()
 
@@ -1254,10 +1416,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
         return
       }
 
-      this.repositoryStateCache.updateCompareState(repository, () => ({
-        commitSHAs: commits.concat(newCommits),
-      }))
-      this.emitUpdate()
+      this.store.dispatch(
+        this.updateCompareStateAndMaybeRender(repository, () => ({
+          commitSHAs: commits.concat(newCommits),
+        }))
+      )
     }
   }
 
@@ -1304,11 +1467,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
       diff: null,
     }
 
-    this.repositoryStateCache.update(repository, () => ({
-      commitSelection: selectionOrFirstFile,
-    }))
-
-    this.emitUpdate()
+    this.store.dispatch(
+      this.updateAndMaybeRender(repository, () => ({
+        commitSelection: selectionOrFirstFile,
+      }))
+    )
 
     if (selectionOrFirstFile.file) {
       this._changeFileSelection(repository, selectionOrFirstFile.file)
@@ -1326,17 +1489,18 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     file: CommittedFileChange
   ): Promise<void> {
-    this.repositoryStateCache.update(repository, state => {
-      const { sha, changedFiles } = state.commitSelection
-      const commitSelection = {
-        sha,
-        changedFiles,
-        file,
-        diff: null,
-      }
-      return { commitSelection }
-    })
-    this.emitUpdate()
+    this.store.dispatch(
+      this.updateAndMaybeRender(repository, state => {
+        const { sha, changedFiles } = state.commitSelection
+        const commitSelection = {
+          sha,
+          changedFiles,
+          file,
+          diff: null,
+        }
+        return { commitSelection }
+      })
+    )
 
     const stateBeforeLoad = this.repositoryStateCache.get(repository)
     const sha = stateBeforeLoad.commitSelection.sha
@@ -1368,16 +1532,18 @@ export class AppStore extends TypedBaseStore<IAppState> {
       return
     }
 
-    this.repositoryStateCache.update(repository, state => {
-      const { sha, changedFiles } = state.commitSelection
-      const commitSelection = {
-        sha,
-        changedFiles,
-        file,
-        diff,
-      }
-      return { commitSelection }
-    })
+    this.store.dispatch(
+      this.updateAndMaybeRender(repository, state => {
+        const { sha, changedFiles } = state.commitSelection
+        const commitSelection = {
+          sha,
+          changedFiles,
+          file,
+          diff,
+        }
+        return { commitSelection }
+      })
+    )
 
     this.emitUpdate()
   }
@@ -1386,7 +1552,13 @@ export class AppStore extends TypedBaseStore<IAppState> {
   public async _selectRepository(
     repository: Repository | CloningRepository | null
   ): Promise<Repository | null> {
-    this.store.dispatch(selectRepository(repository))
+    this.store.dispatch(
+      selectRepository(
+        repository,
+        this.cloningRepositoriesStore,
+        this.repositoryStateCache
+      )
+    )
 
     if (repository == null || repository instanceof CloningRepository) {
       return Promise.resolve(null)
@@ -1417,12 +1589,14 @@ export class AppStore extends TypedBaseStore<IAppState> {
         const prs = await promiseForPRs
 
         if (prs.length > 0) {
-          this.repositoryStateCache.updateBranchesState(repository, () => {
-            return {
-              openPullRequests: prs,
-              isLoadingPullRequests: isLoading,
-            }
-          })
+          this.store.dispatch(
+            this.updateBranchesStateAndMaybeRender(repository, () => {
+              return {
+                openPullRequests: prs,
+                isLoadingPullRequests: isLoading,
+              }
+            })
+          )
         } else {
           this._refreshPullRequests(repository)
         }
@@ -1708,8 +1882,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }
   }
 
-  /** This shouldn't be called directly. See `Dispatcher`. */
-  public async _loadStatus(
+  private async _loadStatus(
     repository: Repository,
     clearPartialState: boolean = false
   ): Promise<boolean> {
@@ -1720,68 +1893,69 @@ export class AppStore extends TypedBaseStore<IAppState> {
       return false
     }
 
-    this.repositoryStateCache.updateChangesState(repository, state => {
-      // Populate a map for all files in the current working directory state
-      const filesByID = new Map<string, WorkingDirectoryFileChange>()
-      state.workingDirectory.files.forEach(f => filesByID.set(f.id, f))
+    this.store.dispatch(
+      this.updateChangesStateAndMaybeRender(repository, state => {
+        // Populate a map for all files in the current working directory state
+        const filesByID = new Map<string, WorkingDirectoryFileChange>()
+        state.workingDirectory.files.forEach(f => filesByID.set(f.id, f))
 
-      // Attempt to preserve the selection state for each file in the new
-      // working directory state by looking at the current files
-      const mergedFiles = status.workingDirectory.files
-        .map(file => {
-          const existingFile = filesByID.get(file.id)
-          if (existingFile) {
-            if (clearPartialState) {
-              if (
-                existingFile.selection.getSelectionType() ===
-                DiffSelectionType.Partial
-              ) {
-                return file.withIncludeAll(false)
+        // Attempt to preserve the selection state for each file in the new
+        // working directory state by looking at the current files
+        const mergedFiles = status.workingDirectory.files
+          .map(file => {
+            const existingFile = filesByID.get(file.id)
+            if (existingFile) {
+              if (clearPartialState) {
+                if (
+                  existingFile.selection.getSelectionType() ===
+                  DiffSelectionType.Partial
+                ) {
+                  return file.withIncludeAll(false)
+                }
               }
+
+              return file.withSelection(existingFile.selection)
+            } else {
+              return file
             }
+          })
+          .sort((x, y) => caseInsensitiveCompare(x.path, y.path))
 
-            return file.withSelection(existingFile.selection)
-          } else {
-            return file
-          }
-        })
-        .sort((x, y) => caseInsensitiveCompare(x.path, y.path))
+        // Collect all the currently available file ids into a set to avoid O(N)
+        // lookups using .find on the mergedFiles array.
+        const mergedFileIds = new Set(mergedFiles.map(x => x.id))
 
-      // Collect all the currently available file ids into a set to avoid O(N)
-      // lookups using .find on the mergedFiles array.
-      const mergedFileIds = new Set(mergedFiles.map(x => x.id))
+        // The previously selected files might not be available in the working
+        // directory any more due to having been committed or discarded so we'll
+        // do a pass over and filter out any selected files that aren't available.
+        let selectedFileIDs = state.selectedFileIDs.filter(id =>
+          mergedFileIds.has(id)
+        )
 
-      // The previously selected files might not be available in the working
-      // directory any more due to having been committed or discarded so we'll
-      // do a pass over and filter out any selected files that aren't available.
-      let selectedFileIDs = state.selectedFileIDs.filter(id =>
-        mergedFileIds.has(id)
-      )
+        // Select the first file if we don't have anything selected and we
+        // have something to select.
+        if (selectedFileIDs.length === 0 && mergedFiles.length > 0) {
+          selectedFileIDs = [mergedFiles[0].id]
+        }
 
-      // Select the first file if we don't have anything selected and we
-      // have something to select.
-      if (selectedFileIDs.length === 0 && mergedFiles.length > 0) {
-        selectedFileIDs = [mergedFiles[0].id]
-      }
+        // The file selection could have changed if the previously selected files
+        // are no longer selectable (they were discarded or committed) but if they
+        // were not changed we can reuse the diff. Note, however that we only render
+        // a diff when a single file is selected. If the previous selection was
+        // a single file with the same id as the current selection we can keep the
+        // diff we had, if not we'll clear it.
+        const workingDirectory = WorkingDirectoryStatus.fromFiles(mergedFiles)
 
-      // The file selection could have changed if the previously selected files
-      // are no longer selectable (they were discarded or committed) but if they
-      // were not changed we can reuse the diff. Note, however that we only render
-      // a diff when a single file is selected. If the previous selection was
-      // a single file with the same id as the current selection we can keep the
-      // diff we had, if not we'll clear it.
-      const workingDirectory = WorkingDirectoryStatus.fromFiles(mergedFiles)
+        const diff =
+          selectedFileIDs.length === 1 &&
+          state.selectedFileIDs.length === 1 &&
+          state.selectedFileIDs[0] === selectedFileIDs[0]
+            ? state.diff
+            : null
 
-      const diff =
-        selectedFileIDs.length === 1 &&
-        state.selectedFileIDs.length === 1 &&
-        state.selectedFileIDs[0] === selectedFileIDs[0]
-          ? state.diff
-          : null
-
-      return { workingDirectory, selectedFileIDs, diff }
-    })
-    this.emitUpdate()
+        return { workingDirectory, selectedFileIDs, diff }
+      })
+    )
 
     this.updateChangesDiffForCurrentSelection(repository)
 
@@ -1793,10 +1967,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     selectedSection: RepositorySectionTab
   ): Promise<void> {
-    this.repositoryStateCache.update(repository, () => ({
-      selectedSection,
-    }))
-    this.emitUpdate()
+    this.store.dispatch(
+      this.updateAndMaybeRender(repository, () => ({
+        selectedSection,
+      }))
+    )
 
     if (selectedSection === RepositorySectionTab.History) {
       return this.refreshHistorySection(repository)
@@ -1813,11 +1988,12 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     selectedFiles: WorkingDirectoryFileChange[]
   ): Promise<void> {
-    this.repositoryStateCache.updateChangesState(repository, () => ({
-      selectedFileIDs: selectedFiles.map(file => file.id),
-      diff: null,
-    }))
-    this.emitUpdate()
+    this.store.dispatch(
+      this.updateChangesStateAndMaybeRender(repository, () => ({
+        selectedFileIDs: selectedFiles.map(file => file.id),
+        diff: null,
+      }))
+    )
 
     this.updateChangesDiffForCurrentSelection(repository)
   }
@@ -1837,10 +2013,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
     // We only render diffs when a single file is selected.
     if (selectedFileIDsBeforeLoad.length !== 1) {
       if (changesStateBeforeLoad.diff !== null) {
-        this.repositoryStateCache.updateChangesState(repository, () => ({
-          diff: null,
-        }))
-        this.emitUpdate()
+        this.store.dispatch(
+          this.updateChangesStateAndMaybeRender(repository, () => ({
+            diff: null,
+          }))
+        )
       }
       return
     }
@@ -1908,11 +2085,12 @@ export class AppStore extends TypedBaseStore<IAppState> {
     )
     const workingDirectory = WorkingDirectoryStatus.fromFiles(updatedFiles)
 
-    this.repositoryStateCache.updateChangesState(repository, () => ({
-      diff,
-      workingDirectory,
-    }))
-    this.emitUpdate()
+    this.store.dispatch(
+      this.updateChangesStateAndMaybeRender(repository, () => ({
+        diff,
+        workingDirectory,
+      }))
+    )
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
@@ -1998,34 +2176,29 @@ export class AppStore extends TypedBaseStore<IAppState> {
     file: WorkingDirectoryFileChange,
     selection: DiffSelection
   ) {
-    this.repositoryStateCache.updateChangesState(repository, state => {
-      const newFiles = state.workingDirectory.files.map(
-        f => (f.id === file.id ? f.withSelection(selection) : f)
-      )
+    this.store.dispatch(
+      this.updateChangesStateAndMaybeRender(repository, state => {
+        const newFiles = state.workingDirectory.files.map(
+          f => (f.id === file.id ? f.withSelection(selection) : f)
+        )
 
-      const workingDirectory = WorkingDirectoryStatus.fromFiles(newFiles)
+        const workingDirectory = WorkingDirectoryStatus.fromFiles(newFiles)
 
-      return { workingDirectory }
-    })
-
-    this.emitUpdate()
+        return { workingDirectory }
+      })
+    )
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
-  public _changeIncludeAllFiles(
-    repository: Repository,
-    includeAll: boolean
-  ): Promise<void> {
-    this.repositoryStateCache.updateChangesState(repository, state => {
-      const workingDirectory = state.workingDirectory.withIncludeAllFiles(
-        includeAll
-      )
-      return { workingDirectory }
-    })
-
-    this.emitUpdate()
-
-    return Promise.resolve()
+  public _changeIncludeAllFiles(repository: Repository, includeAll: boolean) {
+    this.store.dispatch(
+      this.updateChangesStateAndMaybeRender(repository, state => {
+        const workingDirectory = state.workingDirectory.withIncludeAllFiles(
+          includeAll
+        )
+        return { workingDirectory }
+      })
+    )
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
@@ -2206,8 +2379,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
         getAuthorIdentity(repository)
       )) || null
 
-    this.repositoryStateCache.update(repository, () => ({ commitAuthor }))
-    this.emitUpdate()
+    this.store.dispatch(
+      this.updateAndMaybeRender(repository, () => ({ commitAuthor }))
+    )
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
@@ -2261,13 +2435,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     checkoutProgress: ICheckoutProgress | null
   ) {
-    this.repositoryStateCache.update(repository, () => ({ checkoutProgress }))
-
-    const { selectedRepository } = this.store.getState()
-
-    if (selectedRepository === repository) {
-      this.emitUpdate()
-    }
+    this.store.dispatch(
+      this.updateAndMaybeRender(repository, () => ({ checkoutProgress }))
+    )
   }
 
   private getLocalBranch(
@@ -2488,14 +2658,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     pushPullFetchProgress: Progress | null
   ) {
-    this.repositoryStateCache.update(repository, () => ({
-      pushPullFetchProgress,
-    }))
-
-    const { selectedRepository } = this.store.getState()
-    if (selectedRepository === repository) {
-      this.emitUpdate()
-    }
+    this.store.dispatch(
+      this.updateAndMaybeRender(repository, () => ({
+        pushPullFetchProgress,
+      }))
+    )
   }
 
   public async _push(repository: Repository): Promise<void> {
@@ -2653,18 +2820,20 @@ export class AppStore extends TypedBaseStore<IAppState> {
       return
     }
 
-    this.repositoryStateCache.update(repository, () => ({
-      isCommitting: true,
-    }))
-    this.emitUpdate()
+    this.store.dispatch(
+      this.updateAndMaybeRender(repository, () => ({
+        isCommitting: true,
+      }))
+    )
 
     try {
       return await fn()
     } finally {
-      this.repositoryStateCache.update(repository, () => ({
-        isCommitting: false,
-      }))
-      this.emitUpdate()
+      this.store.dispatch(
+        this.updateAndMaybeRender(repository, () => ({
+          isCommitting: false,
+        }))
+      )
     }
   }
 
@@ -2678,18 +2847,20 @@ export class AppStore extends TypedBaseStore<IAppState> {
       return
     }
 
-    this.repositoryStateCache.update(repository, () => ({
-      isPushPullFetchInProgress: true,
-    }))
-    this.emitUpdate()
+    this.store.dispatch(
+      this.updateAndMaybeRender(repository, () => ({
+        isPushPullFetchInProgress: true,
+      }))
+    )
 
     try {
       await fn()
     } finally {
-      this.repositoryStateCache.update(repository, () => ({
-        isPushPullFetchInProgress: false,
-      }))
-      this.emitUpdate()
+      this.store.dispatch(
+        this.updateAndMaybeRender(repository, () => ({
+          isPushPullFetchInProgress: false,
+        }))
+      )
     }
   }
 
@@ -3337,9 +3508,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
     const { compareState } = state
 
     if (compareState.isDivergingBranchBannerVisible !== visible) {
-      this.repositoryStateCache.updateCompareState(repository, () => ({
-        isDivergingBranchBannerVisible: visible,
-      }))
+      this.store.dispatch(
+        this.updateCompareStateAndMaybeRender(repository, () => ({
+          isDivergingBranchBannerVisible: visible,
+        }))
+      )
 
       if (visible) {
         this.statsStore.recordDivergingBranchBannerDisplayed()
@@ -3635,15 +3808,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     progress: IRevertProgress | null
   ) {
-    this.repositoryStateCache.update(repository, () => ({
-      revertProgress: progress,
-    }))
-
-    const { selectedRepository } = this.store.getState()
-
-    if (selectedRepository === repository) {
-      this.emitUpdate()
-    }
+    this.store.dispatch(
+      this.updateAndMaybeRender(repository, () => ({
+        revertProgress: progress,
+      }))
+    )
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
@@ -3847,12 +4016,14 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }
 
     const prs = await promiseForPRs
-    this.repositoryStateCache.updateBranchesState(repository, () => {
-      return {
-        openPullRequests: prs,
-        isLoadingPullRequests: isLoading,
-      }
-    })
+    this.store.dispatch(
+      this.updateBranchesStateAndMaybeRender(repository, () => {
+        return {
+          openPullRequests: prs,
+          isLoadingPullRequests: isLoading,
+        }
+      })
+    )
 
     this._updateCurrentPullRequest(repository)
     this.emitUpdate()
@@ -3888,26 +4059,26 @@ export class AppStore extends TypedBaseStore<IAppState> {
       return
     }
 
-    this.repositoryStateCache.updateBranchesState(repository, state => {
-      let currentPullRequest: PullRequest | null = null
+    this.store.dispatch(
+      this.updateBranchesStateAndMaybeRender(repository, state => {
+        let currentPullRequest: PullRequest | null = null
 
-      const { remote } = this.repositoryStateCache.get(repository)
+        const { remote } = this.repositoryStateCache.get(repository)
 
-      if (state.tip.kind === TipState.Valid && remote) {
-        currentPullRequest = this.findAssociatedPullRequest(
-          state.tip.branch,
-          state.openPullRequests,
-          gitHubRepository,
-          remote
-        )
-      }
+        if (state.tip.kind === TipState.Valid && remote) {
+          currentPullRequest = this.findAssociatedPullRequest(
+            state.tip.branch,
+            state.openPullRequests,
+            gitHubRepository,
+            remote
+          )
+        }
 
-      return {
-        currentPullRequest,
-      }
-    })
-
-    this.emitUpdate()
+        return {
+          currentPullRequest,
+        }
+      })
+    )
   }
 
   public async _openCreatePullRequestInBrowser(

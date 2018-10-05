@@ -73,6 +73,9 @@ export interface INewAppState {
   /** internal state from AppStore that is used in a bunch of places */
   readonly selectedRepository: Repository | CloningRepository | null
 
+  /** user-facing state about the currently selected repository */
+  readonly selectedState: PossibleSelections | null
+
   /** Map from the emoji shortcut (e.g., :+1:) to the image's local path. */
   readonly emoji: Map<string, string>
 
@@ -98,8 +101,6 @@ export interface IOldAppState {
    * A cache of the latest repository state values, keyed by the repository id
    */
   readonly localRepositoryStateLookup: Map<number, ILocalRepositoryState>
-
-  readonly selectedState: PossibleSelections | null
 
   /**
    * The state of the ongoing (if any) sign in process. See SignInState
