@@ -87,6 +87,9 @@ export interface INewAppState {
 
   /** Indicate whether the app is displaying a foldout */
   readonly currentFoldout: Foldout | null
+
+  /** Whether we should hide the toolbar (and show inverted window controls) */
+  readonly titleBarStyle: 'light' | 'dark'
 }
 
 /** All of the shared app state. */
@@ -166,9 +169,6 @@ export interface IOldAppState {
 
   /** The width of the commit summary column in the history view */
   readonly commitSummaryWidth: number
-
-  /** Whether we should hide the toolbar (and show inverted window controls) */
-  readonly titleBarStyle: 'light' | 'dark'
 
   /**
    * Used to highlight access keys throughout the app when the

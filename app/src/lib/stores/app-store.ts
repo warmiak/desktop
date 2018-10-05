@@ -179,11 +179,16 @@ import { createPullRequestUpdaterMiddleware } from './middleware/pull-request-up
 
 // start new redux code
 
+function getTitleBarStyle(showWelcomeFlow: boolean) {
+  return showWelcomeFlow ? 'light' : 'dark'
+}
+
 const initialState: INewAppState = {
   selectedRepository: null,
   selectedState: null,
   emoji: new Map<string, string>(),
   showWelcomeFlow: false,
+  titleBarStyle: getTitleBarStyle(false),
   currentPopup: null,
   currentFoldout: null,
 }
@@ -507,7 +512,11 @@ function theSimplestReducer(
       return { ...state, emoji: action.emoji }
 
     case ActionTypes.ShowWelcomeFlow:
-      return { ...state, showWelcomeFlow: action.show }
+      return {
+        ...state,
+        showWelcomeFlow: action.show,
+        titleBarStyle: getTitleBarStyle(action.show),
+      }
 
     case ActionTypes.SelectRepository:
       return { ...state, selectedRepository: action.repository }
@@ -930,8 +939,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
   public getState(): IAppState {
     const newState = this.store.getState()
 
-    const { showWelcomeFlow } = newState
-
     const oldState: IOldAppState = {
       accounts: this.accounts,
       repositories: [
@@ -947,7 +954,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       sidebarWidth: this.sidebarWidth,
       commitSummaryWidth: this.commitSummaryWidth,
       appMenuState: this.appMenu ? this.appMenu.openMenus : [],
-      titleBarStyle: showWelcomeFlow ? 'light' : 'dark',
+
       highlightAccessKeys: this.highlightAccessKeys,
       isUpdateAvailableBannerVisible: this.isUpdateAvailableBannerVisible,
       askForConfirmationOnRepositoryRemoval: this.confirmRepoRemoval,
