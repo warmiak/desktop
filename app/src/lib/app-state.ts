@@ -78,6 +78,12 @@ export interface INewAppState {
 
   /** Indicate whether the app should show the welcome wizard. */
   readonly showWelcomeFlow: boolean
+
+  /** Indicate whether the app is displaying a popup */
+  readonly currentPopup: Popup | null
+
+  /** Indicate whether the app is displaying a foldout */
+  readonly currentFoldout: Foldout | null
 }
 
 /** All of the shared app state. */
@@ -120,9 +126,6 @@ export interface IOldAppState {
    * window has focus.
    */
   readonly appIsFocused: boolean
-
-  readonly currentPopup: Popup | null
-  readonly currentFoldout: Foldout | null
 
   /**
    * A list of currently open menus with their selected items

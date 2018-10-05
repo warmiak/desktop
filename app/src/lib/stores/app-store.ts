@@ -179,6 +179,8 @@ const initialState: INewAppState = {
   selectedRepository: null,
   emoji: new Map<string, string>(),
   showWelcomeFlow: false,
+  currentPopup: null,
+  currentFoldout: null,
 }
 
 export enum ActionTypes {
@@ -193,6 +195,11 @@ export enum ActionTypes {
   ScheduleAheadBehindComparisons = 'ScheduleAheadBehindComparisons',
   ClearPendingAheadBehindComparisons = 'ClearPendingAheadBehindComparisons',
   AddPullRequestToDatabase = 'AddPullRequestToDatabase',
+  ClosePopup = 'ClosePopup',
+  ShowPopup = 'ShowPopup',
+  CloseFoldout = 'CloseFoldout',
+  ShowFoldout = 'ShowFoldout',
+  CloseCurrentFoldout = 'CloseCurrentFoldout',
 }
 
 type EmojiLoaded = {
@@ -318,6 +325,74 @@ function selectRepository(
   }
 }
 
+type ClosePopup = {
+  type: ActionTypes.ClosePopup
+}
+
+function closePopup(): ThunkResult<void> {
+  return async (dispatch, getState) => {
+    const { currentPopup } = getState()
+    if (currentPopup == null) {
+      return
+    }
+
+    if (currentPopup.type === PopupType.CloneRepository) {
+      // TODO: how to port this over?
+      // this._completeOpenInDesktop(() => Promise.resolve(null))
+    }
+
+    dispatch({ type: ActionTypes.ClosePopup })
+  }
+}
+
+type ShowPopup = {
+  type: ActionTypes.ShowPopup
+  popup: Popup
+}
+
+function showPopup(popup: Popup): ShowPopup {
+  return { type: ActionTypes.ShowPopup, popup }
+}
+
+type CloseFoldoutType = {
+  type: ActionTypes.CloseFoldout
+  foldoutType: FoldoutType
+}
+
+function closeFoldout(foldoutType: FoldoutType): ThunkResult<void> {
+  return (dispatch, getState) => {
+    const { currentFoldout } = getState()
+    if (currentFoldout === null) {
+      return
+    }
+
+    // ignore this request if the current foldout is different to the one
+    // requested to close
+    if (foldoutType !== undefined && currentFoldout.type !== foldoutType) {
+      return
+    }
+
+    dispatch({ type: ActionTypes.CloseCurrentFoldout })
+  }
+}
+
+type ShowFoldout = {
+  type: ActionTypes.ShowFoldout
+  foldout: Foldout
+}
+
+function showFoldout(foldout: Foldout): ShowFoldout {
+  return { type: ActionTypes.ShowFoldout, foldout }
+}
+
+type CloseCurrentFoldout = {
+  type: ActionTypes.CloseCurrentFoldout
+}
+
+function closeCurrentFoldout(): CloseCurrentFoldout {
+  return { type: ActionTypes.CloseCurrentFoldout }
+}
+
 export type Actions =
   | EmojiLoaded
   | ShowWelcomeFlow
@@ -326,6 +401,11 @@ export type Actions =
   | ScheduleComparisons
   | ClearPendingAheadBehindComparisons
   | AddPullRequestToDatabase
+  | ClosePopup
+  | ShowPopup
+  | ShowFoldout
+  | CloseFoldoutType
+  | CloseCurrentFoldout
 
 type AsyncStore = Store<INewAppState, Actions> & {
   dispatch: ThunkDispatch<INewAppState, undefined, Actions>
@@ -346,6 +426,18 @@ function theSimplestReducer(
 
     case ActionTypes.SelectRepository:
       return { ...state, selectedRepository: action.repository }
+
+    case ActionTypes.ShowPopup:
+      return { ...state, currentPopup: action.popup }
+
+    case ActionTypes.ClosePopup:
+      return { ...state, currentPopup: null }
+
+    case ActionTypes.ShowFoldout:
+      return { ...state, currentFoldout: action.foldout }
+
+    case ActionTypes.CloseCurrentFoldout:
+      return { ...state, currentFoldout: null }
 
     default:
       return state
@@ -424,8 +516,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
   private accounts: ReadonlyArray<Account> = new Array<Account>()
   private repositories: ReadonlyArray<Repository> = new Array<Repository>()
 
-  private currentPopup: Popup | null = null
-  private currentFoldout: Foldout | null = null
   private errors: ReadonlyArray<Error> = new Array<Error>()
   private emitQueued = false
 
@@ -716,8 +806,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
       appIsFocused: this.appIsFocused,
       selectedState: this.getSelectedState(),
       signInState: this.signInStore.getState(),
-      currentPopup: this.currentPopup,
-      currentFoldout: this.currentFoldout,
       errors: this.errors,
       sidebarWidth: this.sidebarWidth,
       commitSummaryWidth: this.commitSummaryWidth,
@@ -2124,61 +2212,31 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
   /** This shouldn't be called directly. See `Dispatcher`. */
   public async _showPopup(popup: Popup): Promise<void> {
-    this._closePopup()
-
+    this.store.dispatch(closePopup())
     // Always close the app menu when showing a pop up. This is only
     // applicable on Windows where we draw a custom app menu.
-    this._closeFoldout(FoldoutType.AppMenu)
-
-    this.currentPopup = popup
-    this.emitUpdate()
+    this.store.dispatch(closeFoldout(FoldoutType.AppMenu))
+    this.store.dispatch(showPopup(popup))
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
-  public _closePopup(): Promise<void> {
-    const currentPopup = this.currentPopup
-    if (currentPopup == null) {
-      return Promise.resolve()
-    }
-
-    if (currentPopup.type === PopupType.CloneRepository) {
-      this._completeOpenInDesktop(() => Promise.resolve(null))
-    }
-
-    this.currentPopup = null
-    this.emitUpdate()
-
-    return Promise.resolve()
+  public _closePopup() {
+    this.store.dispatch(closePopup())
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
   public async _showFoldout(foldout: Foldout): Promise<void> {
-    this.currentFoldout = foldout
-    this.emitUpdate()
+    this.store.dispatch(showFoldout(foldout))
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
   public async _closeCurrentFoldout(): Promise<void> {
-    if (this.currentFoldout == null) {
-      return
-    }
-
-    this.currentFoldout = null
-    this.emitUpdate()
+    this.store.dispatch(closeCurrentFoldout())
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
-  public async _closeFoldout(foldout: FoldoutType): Promise<void> {
-    if (this.currentFoldout == null) {
-      return
-    }
-
-    if (foldout !== undefined && this.currentFoldout.type !== foldout) {
-      return
-    }
-
-    this.currentFoldout = null
-    this.emitUpdate()
+  public _closeFoldout(foldoutType: FoldoutType) {
+    this.store.dispatch(closeFoldout(foldoutType))
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
@@ -2451,9 +2509,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
     account: IGitAccount | null
   ): Promise<void> {
     const gitStore = this.getGitStore(repository)
-    const remote = gitStore.remote
-    if (!remote) {
-      this._showPopup({ type: PopupType.PublishRepository, repository })
+    const { remote } = gitStore
+    if (remote === null) {
+      this.store.dispatch(
+        showPopup({ type: PopupType.PublishRepository, repository })
+      )
       return
     }
 
@@ -3468,10 +3528,12 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }
 
     if (lfsRepositories.length > 0) {
-      this._showPopup({
-        type: PopupType.InitializeLFS,
-        repositories: lfsRepositories,
-      })
+      this.store.dispatch(
+        showPopup({
+          type: PopupType.InitializeLFS,
+          repositories: lfsRepositories,
+        })
+      )
     }
 
     return addedRepositories
@@ -3497,9 +3559,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
     const allRepositories = await this.repositoriesStore.getAll()
     if (allRepositories.length === 0) {
-      this._closeFoldout(FoldoutType.Repository)
+      this.store.dispatch(closeFoldout(FoldoutType.Repository))
     } else {
-      this._showFoldout({ type: FoldoutType.Repository })
+      this.store.dispatch(showFoldout({ type: FoldoutType.Repository }))
     }
   }
 
@@ -3601,15 +3663,15 @@ export class AppStore extends TypedBaseStore<IAppState> {
     })
   }
 
-  public async promptForGenericGitAuthentication(
+  public promptForGenericGitAuthentication(
     repository: Repository | CloningRepository,
     retryAction: RetryAction
-  ): Promise<void> {
+  ) {
     let url
     if (repository instanceof Repository) {
       const gitStore = this.getGitStore(repository)
-      const remote = gitStore.remote
-      if (!remote) {
+      const { remote } = gitStore
+      if (remote === null) {
         return
       }
 
@@ -3619,11 +3681,13 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }
 
     const hostname = getGenericHostname(url)
-    return this._showPopup({
-      type: PopupType.GenericGitAuthentication,
-      hostname,
-      retryAction,
-    })
+    this.store.dispatch(
+      showPopup({
+        type: PopupType.GenericGitAuthentication,
+        hostname,
+        retryAction,
+      })
+    )
   }
 
   public async _installGlobalLFSFilters(force: boolean): Promise<void> {
@@ -3694,18 +3758,22 @@ export class AppStore extends TypedBaseStore<IAppState> {
     const aheadBehind = state.aheadBehind
 
     if (aheadBehind == null) {
-      this._showPopup({
-        type: PopupType.PushBranchCommits,
-        repository,
-        branch,
-      })
+      this.store.dispatch(
+        showPopup({
+          type: PopupType.PushBranchCommits,
+          repository,
+          branch,
+        })
+      )
     } else if (aheadBehind.ahead > 0) {
-      this._showPopup({
-        type: PopupType.PushBranchCommits,
-        repository,
-        branch,
-        unPushedCommits: aheadBehind.ahead,
-      })
+      this.store.dispatch(
+        showPopup({
+          type: PopupType.PushBranchCommits,
+          repository,
+          branch,
+          unPushedCommits: aheadBehind.ahead,
+        })
+      )
     } else {
       await this._openCreatePullRequestInBrowser(repository, branch)
     }

@@ -261,7 +261,7 @@ export class Dispatcher {
   }
 
   /** Close the current popup. */
-  public closePopup(): Promise<void> {
+  public closePopup() {
     return this.appStore._closePopup()
   }
 
@@ -276,7 +276,7 @@ export class Dispatcher {
   }
 
   /** Close the specified foldout. */
-  public closeFoldout(foldout: FoldoutType): Promise<void> {
+  public closeFoldout(foldout: FoldoutType) {
     return this.appStore._closeFoldout(foldout)
   }
 
@@ -1019,8 +1019,8 @@ export class Dispatcher {
   public promptForGenericGitAuthentication(
     repository: Repository | CloningRepository,
     retry: RetryAction
-  ): Promise<void> {
-    return this.appStore.promptForGenericGitAuthentication(repository, retry)
+  ) {
+    this.appStore.promptForGenericGitAuthentication(repository, retry)
   }
 
   /** Save the generic git credentials. */
