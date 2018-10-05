@@ -1053,8 +1053,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
         return { commitSelection }
       })
     )
-
-    this.emitUpdate()
   }
 
   private updateOrSelectFirstCommit(
@@ -1232,7 +1230,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
       this.updateOrSelectFirstCommit(repository, commits)
 
-      return this.emitUpdate()
+      return
     }
 
     if (action.kind === CompareActionKind.Branch) {
@@ -1552,8 +1550,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
         return { commitSelection }
       })
     )
-
-    this.emitUpdate()
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
@@ -1609,8 +1605,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
           this._refreshPullRequests(repository)
         }
 
-        this._updateCurrentPullRequest(repository)
-        this.emitUpdate()
+        this.updateCurrentPullRequest(repository)
       })
     }
 
@@ -2259,7 +2254,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       refreshSectionPromise,
     ])
 
-    this._updateCurrentPullRequest(repository)
+    this.updateCurrentPullRequest(repository)
     this.updateMenuItemLabels(repository)
     this._initializeCompare(repository)
     this.refreshIndicatorsForRepositories([repository])
@@ -4033,14 +4028,12 @@ export class AppStore extends TypedBaseStore<IAppState> {
       })
     )
 
-    this._updateCurrentPullRequest(repository)
-    this.emitUpdate()
+    this.updateCurrentPullRequest(repository)
   }
 
   private findAssociatedPullRequest(
     branch: Branch,
     pullRequests: ReadonlyArray<PullRequest>,
-    gitHubRepository: GitHubRepository,
     remote: IRemote
   ): PullRequest | null {
     const upstream = branch.upstreamWithoutRemote
@@ -4060,10 +4053,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
     return pr
   }
 
-  private _updateCurrentPullRequest(repository: Repository) {
+  private updateCurrentPullRequest(repository: Repository) {
     const gitHubRepository = repository.gitHubRepository
 
-    if (!gitHubRepository) {
+    if (gitHubRepository === null) {
       return
     }
 
@@ -4077,7 +4070,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
           currentPullRequest = this.findAssociatedPullRequest(
             state.tip.branch,
             state.openPullRequests,
-            gitHubRepository,
             remote
           )
         }
