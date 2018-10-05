@@ -236,11 +236,8 @@ export class Dispatcher {
   }
 
   /** Change the Include All state. */
-  public changeIncludeAllFiles(
-    repository: Repository,
-    includeAll: boolean
-  ): Promise<void> {
-    return this.appStore._changeIncludeAllFiles(repository, includeAll)
+  public changeIncludeAllFiles(repository: Repository, includeAll: boolean) {
+    this.appStore._changeIncludeAllFiles(repository, includeAll)
   }
 
   /**
