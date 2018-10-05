@@ -91,6 +91,7 @@ import { MergeConflictsWarning } from './merge-conflicts'
 import { AppTheme } from './app-theme'
 import { ApplicationTheme } from './lib/application-theme'
 import { RepositoryStateCache } from '../lib/stores/repository-state-cache'
+import { ignoreExistingUpstreamRemote } from '../lib/stores/ignore-existing-upstream'
 
 const MinuteInMilliseconds = 1000 * 60
 
@@ -1295,7 +1296,7 @@ export class App extends React.Component<IAppProps, IAppState> {
             existingRemote={popup.existingRemote}
             onDismissed={this.onPopupDismissed}
             onUpdate={this.onUpdateExistingUpstreamRemote}
-            onIgnore={this.onIgnoreExistingUpstreamRemote}
+            onIgnore={ignoreExistingUpstreamRemote}
           />
         )
       case PopupType.ReleaseNotes:
@@ -1331,10 +1332,6 @@ export class App extends React.Component<IAppProps, IAppState> {
 
   private onUpdateExistingUpstreamRemote = (repository: Repository) => {
     this.props.dispatcher.updateExistingUpstreamRemote(repository)
-  }
-
-  private onIgnoreExistingUpstreamRemote = (repository: Repository) => {
-    this.props.dispatcher.ignoreExistingUpstreamRemote(repository)
   }
 
   private updateExistingLFSFilters = () => {

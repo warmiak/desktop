@@ -1129,11 +1129,6 @@ export class Dispatcher {
     return this.appStore._updateExistingUpstreamRemote(repository)
   }
 
-  /** Ignore the existing `upstream` remote. */
-  public ignoreExistingUpstreamRemote(repository: Repository): Promise<void> {
-    return this.appStore._ignoreExistingUpstreamRemote(repository)
-  }
-
   /** Checks out a PR whose ref exists locally or in a forked repo. */
   public async checkoutPullRequest(
     repository: Repository,

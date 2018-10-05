@@ -176,6 +176,7 @@ import { readEmoji } from '../read-emoji'
 import { createBackgroundFetcherMiddleware } from './middleware/background-fetcher'
 import { createAheadBehindUpdaterMiddleware } from './middleware/ahead-behind-updater'
 import { createPullRequestUpdaterMiddleware } from './middleware/pull-request-updater'
+import { getIgnoreExistingUpstreamRemote } from './ignore-existing-upstream'
 
 // start new redux code
 
@@ -4114,28 +4115,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
     return this._refreshRepository(repository)
   }
 
-  private getIgnoreExistingUpstreamRemoteKey(repository: Repository): string {
-    return `repository/${repository.id}/ignoreExistingUpstreamRemote`
-  }
-
-  public _ignoreExistingUpstreamRemote(repository: Repository): Promise<void> {
-    const key = this.getIgnoreExistingUpstreamRemoteKey(repository)
-    localStorage.setItem(key, '1')
-
-    return Promise.resolve()
-  }
-
-  private getIgnoreExistingUpstreamRemote(
-    repository: Repository
-  ): Promise<boolean> {
-    const key = this.getIgnoreExistingUpstreamRemoteKey(repository)
-    const value = localStorage.getItem(key)
-    return Promise.resolve(value === '1')
-  }
-
   private async addUpstreamRemoteIfNeeded(repository: Repository) {
     const gitStore = this.getGitStore(repository)
-    const ignored = await this.getIgnoreExistingUpstreamRemote(repository)
+    const ignored = await getIgnoreExistingUpstreamRemote(repository)
     if (ignored) {
       return
     }
