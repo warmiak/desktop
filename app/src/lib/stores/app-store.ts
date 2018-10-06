@@ -522,7 +522,7 @@ function loadChangedFilesForCurrentSelection(
     }))
 
     if (selectionOrFirstFile.file) {
-      selectFileInCommit(repository, selectionOrFirstFile.file)
+      dispatch(selectFileInCommit(repository, selectionOrFirstFile.file))
     }
 
     dispatch(updateSelectedRepositoryState(repository))
@@ -1321,30 +1321,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.store.dispatch(updateSelectedRepositoryState(repository))
   }
 
-  private updateOrSelectFirstCommit(
-    repository: Repository,
-    commitSHAs: ReadonlyArray<string>
-  ) {
-    const state = this.repositoryStateCache.get(repository)
-    let selectedSHA = state.commitSelection.sha
-    if (selectedSHA != null) {
-      const index = commitSHAs.findIndex(sha => sha === selectedSHA)
-      if (index < 0) {
-        // selected SHA is not in this list
-        // -> clear the selection in the app state
-        selectedSHA = null
-        this.clearSelectedCommit(repository)
-      }
-    }
-
-    if (selectedSHA == null && commitSHAs.length > 0) {
-      this._changeCommitSelection(repository, commitSHAs[0])
-      this._loadChangedFilesForCurrentSelection(repository)
-    }
-
-    this.store.dispatch(updateSelectedRepositoryState(repository))
-  }
-
   /** This shouldn't be called directly. See `Dispatcher`. */
   public async _initializeCompare(
     repository: Repository,
@@ -1499,55 +1475,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
-  public async _loadChangedFilesForCurrentSelection(
-    repository: Repository
-  ): Promise<void> {
-    const state = this.repositoryStateCache.get(repository)
-    const { commitSelection } = state
-    const currentSHA = commitSelection.sha
-    if (currentSHA == null) {
-      return
-    }
-
-    const gitStore = this.gitStoreCache.get(repository)
-    const changedFiles = await gitStore.performFailableOperation(() =>
-      getChangedFiles(repository, currentSHA)
-    )
-    if (!changedFiles) {
-      return
-    }
-
-    // The selection could have changed between when we started loading the
-    // changed files and we finished. We might wanna store the changed files per
-    // SHA/path.
-    if (currentSHA !== state.commitSelection.sha) {
-      return
-    }
-
-    // if we're selecting a commit for the first time, we should select the
-    // first file in the commit and render the diff immediately
-
-    const noFileSelected = commitSelection.file === null
-
-    const firstFileOrDefault =
-      noFileSelected && changedFiles.length
-        ? changedFiles[0]
-        : commitSelection.file
-
-    const selectionOrFirstFile = {
-      file: firstFileOrDefault,
-      sha: commitSelection.sha,
-      changedFiles,
-      diff: null,
-    }
-
-    this.repositoryStateCache.update(repository, () => ({
-      commitSelection: selectionOrFirstFile,
-    }))
-
-    if (selectionOrFirstFile.file) {
-      this._changeFileSelection(repository, selectionOrFirstFile.file)
-    }
+  public async _loadChangedFilesForCurrentSelection(repository: Repository) {
+    this.store.dispatch(loadChangedFilesForCurrentSelection(repository))
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
@@ -1560,58 +1489,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
   public async _changeFileSelection(
     repository: Repository,
     file: CommittedFileChange
-  ): Promise<void> {
-    this.repositoryStateCache.update(repository, state => {
-      const { sha, changedFiles } = state.commitSelection
-      const commitSelection = {
-        sha,
-        changedFiles,
-        file,
-        diff: null,
-      }
-      return { commitSelection }
-    })
-
-    const stateBeforeLoad = this.repositoryStateCache.get(repository)
-    const sha = stateBeforeLoad.commitSelection.sha
-
-    if (!sha) {
-      if (__DEV__) {
-        throw new Error(
-          "No currently selected sha yet we've been asked to switch file selection"
-        )
-      } else {
-        return
-      }
-    }
-
-    const diff = await getCommitDiff(repository, file, sha)
-
-    const stateAfterLoad = this.repositoryStateCache.get(repository)
-
-    // A whole bunch of things could have happened since we initiated the diff load
-    if (
-      stateAfterLoad.commitSelection.sha !== stateBeforeLoad.commitSelection.sha
-    ) {
-      return
-    }
-    if (!stateAfterLoad.commitSelection.file) {
-      return
-    }
-    if (stateAfterLoad.commitSelection.file.id !== file.id) {
-      return
-    }
-
-    this.repositoryStateCache.update(repository, state => {
-      const { sha, changedFiles } = state.commitSelection
-      const commitSelection = {
-        sha,
-        changedFiles,
-        file,
-        diff,
-      }
-      return { commitSelection }
-    })
+  ) {
+    this.store.dispatch(selectFileInCommit(repository, file))
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
@@ -2417,10 +2296,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       await gitStore.loadLocalCommits(tip.branch)
     }
 
-    return this.updateOrSelectFirstCommit(
-      repository,
-      state.compareState.commitSHAs
-    )
+    this.store.dispatch(updateOrSelectFirstCommit(repository))
   }
 
   private async refreshAuthor(repository: Repository): Promise<void> {
