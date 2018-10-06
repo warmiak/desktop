@@ -463,14 +463,8 @@ export class Dispatcher {
   /**
    * Set the divering branch notification banner's visibility
    */
-  public setDivergingBranchBannerVisibility(
-    repository: Repository,
-    isVisible: boolean
-  ) {
-    return this.appStore._setDivergingBranchBannerVisibility(
-      repository,
-      isVisible
-    )
+  public clearDivergingBranchBannerNotification(repository: Repository) {
+    return this.appStore._clearDivergingBranchBannerNotification(repository)
   }
 
   /**

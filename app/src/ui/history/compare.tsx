@@ -569,9 +569,8 @@ export class CompareSidebar extends React.Component<
   }
 
   private onNotificationBannerDismissed = (reason: DismissalReason) => {
-    this.props.dispatcher.setDivergingBranchBannerVisibility(
-      this.props.repository,
-      false
+    this.props.dispatcher.clearDivergingBranchBannerNotification(
+      this.props.repository
     )
     this.props.dispatcher.recordDivergingBranchBannerDismissal()
 

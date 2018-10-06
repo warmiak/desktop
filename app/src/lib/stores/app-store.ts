@@ -1287,6 +1287,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       remote: gitStore.remote,
       lastFetched: gitStore.lastFetched,
     }))
+
     this.store.dispatch(updateSelectedRepositoryState(repository))
   }
 
@@ -1374,9 +1375,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
         ? cachedDefaultBranch
         : null
 
+    const { aheadBehindCache, inferredComparisonBranch } = compareState
+
     let inferredBranch: Branch | null = null
     let aheadBehindOfInferredBranch: IAheadBehind | null = null
-    if (tip.kind === TipState.Valid && compareState.aheadBehindCache !== null) {
+    if (tip.kind === TipState.Valid && aheadBehindCache !== null) {
       inferredBranch = await inferComparisonBranch(
         repository,
         allBranches,
@@ -1387,7 +1390,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       )
 
       if (inferredBranch !== null) {
-        aheadBehindOfInferredBranch = compareState.aheadBehindCache.get(
+        aheadBehindOfInferredBranch = aheadBehindCache.get(
           tip.branch.tip.sha,
           inferredBranch.tip.sha
         )
@@ -1409,8 +1412,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     if (inferredBranch !== null) {
       const currentCount = getBehindOrDefault(aheadBehindOfInferredBranch)
 
-      const prevInferredBranchState =
-        state.compareState.inferredComparisonBranch
+      const prevInferredBranchState = inferredComparisonBranch
 
       const previousCount = getBehindOrDefault(
         prevInferredBranchState.aheadBehind
@@ -1419,9 +1421,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
       // we only want to show the banner when the the number
       // commits behind has changed since the last it was visible
       const countChanged = currentCount > 0 && previousCount !== currentCount
-      this._setDivergingBranchBannerVisibility(repository, countChanged)
+      this.setDivergingBranchBannerVisibility(repository, countChanged)
     } else {
-      this._setDivergingBranchBannerVisibility(repository, false)
+      this.setDivergingBranchBannerVisibility(repository, false)
     }
 
     const cachedState = compareState.formState
@@ -3541,7 +3543,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.emitUpdate()
   }
 
-  public _setDivergingBranchBannerVisibility(
+  public _clearDivergingBranchBannerNotification(repository: Repository) {
+    this.setDivergingBranchBannerVisibility(repository, false)
+  }
+
+  private setDivergingBranchBannerVisibility(
     repository: Repository,
     visible: boolean
   ) {
