@@ -322,9 +322,7 @@ type SelectRepository = {
 }
 
 function selectRepository(
-  repository: Repository | CloningRepository | null,
-  cloningRepositoriesStore: CloningRepositoriesStore,
-  repositoryStateCache: RepositoryStateCache
+  repository: Repository | CloningRepository | null
 ): ThunkResult<void> {
   return (dispatch, getState) => {
     if (repository !== null && repository instanceof Repository) {
@@ -589,10 +587,7 @@ function selectFileInCommit(
   }
 }
 
-function changeCommitSelection(
-  repository: Repository,
-  sha: string
-): ThunkResult<void> {
+function selectCommit(repository: Repository, sha: string): ThunkResult<void> {
   return (dispatch, getState, { repositoryStateCache }) => {
     repositoryStateCache.update(repository, state => {
       const commitChanged = state.commitSelection.sha !== sha
@@ -603,8 +598,6 @@ function changeCommitSelection(
       const commitSelection = { sha, file, diff: null, filesInCommit }
       return { commitSelection }
     })
-
-    dispatch(updateSelectedRepositoryState(repository))
   }
 }
 function clearSelectedCommit(repository: Repository): ThunkResult<void> {
@@ -638,7 +631,7 @@ function updateOrSelectFirstCommit(repository: Repository): ThunkResult<void> {
     }
 
     if (selectedSHA == null && commitSHAs.length > 0) {
-      dispatch(changeCommitSelection(repository, commitSHAs[0]))
+      dispatch(selectCommit(repository, commitSHAs[0]))
       dispatch(loadSelectedCommit(repository))
     }
   }
@@ -1289,16 +1282,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   private clearSelectedCommit(repository: Repository) {
-    this.repositoryStateCache.update(repository, () => ({
-      commitSelection: {
-        sha: null,
-        file: null,
-        filesInCommit: [],
-        diff: null,
-      },
-    }))
-
-    this.store.dispatch(updateSelectedRepositoryState(repository))
+    this.store.dispatch(clearSelectedCommit(repository))
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
@@ -1494,13 +1478,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
   public async _selectRepository(
     repository: Repository | CloningRepository | null
   ): Promise<Repository | null> {
-    this.store.dispatch(
-      selectRepository(
-        repository,
-        this.cloningRepositoriesStore,
-        this.repositoryStateCache
-      )
-    )
+    this.store.dispatch(selectRepository(repository))
 
     if (repository == null || repository instanceof CloningRepository) {
       return Promise.resolve(null)
@@ -3436,7 +3414,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
         this.statsStore.recordDivergingBranchBannerDisplayed()
       }
 
-      this.emitUpdate()
+      this.store.dispatch(updateSelectedRepositoryState(repository))
     }
   }
 
