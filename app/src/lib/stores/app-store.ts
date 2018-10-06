@@ -177,6 +177,7 @@ import { createBackgroundFetcherMiddleware } from './middleware/background-fetch
 import { createAheadBehindUpdaterMiddleware } from './middleware/ahead-behind-updater'
 import { createPullRequestUpdaterMiddleware } from './middleware/pull-request-updater'
 import { getIgnoreExistingUpstreamRemote } from './ignore-existing-upstream'
+import { GitStoreCache } from './git-store-cache'
 
 // start new redux code
 
@@ -610,15 +611,13 @@ const BackgroundFetchMinimumInterval = 30 * 60 * 1000
 
 export class AppStore extends TypedBaseStore<IAppState> {
   private readonly store: AsyncStore
+  private readonly gitStoreCache: GitStoreCache
 
   private accounts: ReadonlyArray<Account> = new Array<Account>()
   private repositories: ReadonlyArray<Repository> = new Array<Repository>()
 
   private errors: ReadonlyArray<Error> = new Array<Error>()
   private emitQueued = false
-
-  /** GitStores keyed by their hash. */
-  private readonly gitStores = new Map<string, GitStore>()
 
   private readonly localRepositoryStateLookup = new Map<
     number,
@@ -685,6 +684,13 @@ export class AppStore extends TypedBaseStore<IAppState> {
     private readonly repositoryStateCache: RepositoryStateCache
   ) {
     super()
+
+    this.gitStoreCache = new GitStoreCache(
+      shell,
+      (repo, store) => this.onGitStoreUpdated(repo, store),
+      (repo, commits) => this.loadAndCacheUsers(repo, this.accounts, commits),
+      error => this.emitError(error)
+    )
 
     const window = remote.getCurrentWindow()
     this.windowState = getWindowState(window)
@@ -963,28 +969,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }))
   }
 
-  private removeGitStore(repository: Repository) {
-    if (this.gitStores.has(repository.hash)) {
-      this.gitStores.delete(repository.hash)
-    }
-  }
-
-  private getGitStore(repository: Repository): GitStore {
-    let gitStore = this.gitStores.get(repository.hash)
-    if (!gitStore) {
-      gitStore = new GitStore(repository, shell)
-      gitStore.onDidUpdate(() => this.onGitStoreUpdated(repository, gitStore!))
-      gitStore.onDidLoadNewCommits(commits =>
-        this.loadAndCacheUsers(repository, this.accounts, commits)
-      )
-      gitStore.onDidError(error => this.emitError(error))
-
-      this.gitStores.set(repository.hash, gitStore)
-    }
-
-    return gitStore
-  }
-
   private clearSelectedCommit(repository: Repository) {
     this.updateAndMaybeRender(repository, () => ({
       commitSelection: {
@@ -1123,7 +1107,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     action: CompareAction
   ): Promise<void> {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     const kind = action.kind
 
     if (action.kind === CompareActionKind.History) {
@@ -1193,7 +1177,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     action: ICompareToBranch
   ) {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
 
     const comparisonBranch = action.branch
     const compare = await gitStore.getCompareCommits(
@@ -1345,7 +1329,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
   /** This shouldn't be called directly. See `Dispatcher`. */
   public async _loadNextCommitBatch(repository: Repository): Promise<void> {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
 
     const state = this.repositoryStateCache.get(repository)
     const { formState } = state.compareState
@@ -1375,7 +1359,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       return
     }
 
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     const changedFiles = await gitStore.performFailableOperation(() =>
       getChangedFiles(repository, currentSHA)
     )
@@ -1500,7 +1484,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       // as the repository is no longer found on disk, cleaning this up
       // ensures we don't accidentally run any Git operations against the
       // wrong location if the user then relocates the `.git` folder elsewhere
-      this.removeGitStore(repository)
+      this.gitStoreCache.remove(repository)
       return Promise.resolve(null)
     }
 
@@ -1584,7 +1568,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     lastPush: Date | null
   ): boolean {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     const lastFetched = gitStore.lastFetched
 
     if (lastFetched === null) {
@@ -1815,7 +1799,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     clearPartialState: boolean = false
   ): Promise<boolean> {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     const status = await gitStore.loadStatus()
 
     if (!status) {
@@ -2025,7 +2009,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       return file.selection.getSelectionType() !== DiffSelectionType.None
     })
 
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
 
     const result = await this.isCommitting(repository, () => {
       return gitStore.performFailableOperation(async () => {
@@ -2131,7 +2115,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }
 
     const state = this.repositoryStateCache.get(repository)
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
 
     // if we cannot get a valid status it's a good indicator that the repository
     // is in a bad state - let's mark it as missing here and give up on the
@@ -2216,7 +2200,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       return
     }
 
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     const status = await gitStore.loadStatus()
     if (status === null) {
       lookup.delete(repository.id)
@@ -2256,7 +2240,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       await this._loadStatus(repository, options.clearPartialState)
     }
 
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     const state = this.repositoryStateCache.get(repository)
 
     if (state.branchesState.tip.kind === TipState.Valid) {
@@ -2273,7 +2257,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
    * This will be called automatically when appropriate.
    */
   private async refreshHistorySection(repository: Repository): Promise<void> {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     const state = this.repositoryStateCache.get(repository)
     const tip = state.branchesState.tip
 
@@ -2288,7 +2272,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   private async refreshAuthor(repository: Repository): Promise<void> {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     const commitAuthor =
       (await gitStore.performFailableOperation(() =>
         getAuthorIdentity(repository)
@@ -2332,7 +2316,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     name: string,
     startPoint?: string
   ): Promise<Repository> {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     const branch = await gitStore.performFailableOperation(() =>
       createBranch(repository, name, startPoint)
     )
@@ -2355,7 +2339,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     branch: string
   ): Branch | null {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     return (
       gitStore.allBranches.find(b => b.nameWithoutRemote === branch) || null
     )
@@ -2366,7 +2350,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     branch: Branch | string
   ): Promise<Repository> {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     const kind = 'checkout'
 
     const foundBranch =
@@ -2497,7 +2481,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
   private async matchGitHubRepository(
     repository: Repository
   ): Promise<IMatchedGitHubRepository | null> {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     const remote = gitStore.defaultRemote
     return remote !== null
       ? matchGitHubRepository(this.accounts, remote.url)
@@ -2528,7 +2512,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     branch: Branch,
     newName: string
   ): Promise<void> {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     await gitStore.performFailableOperation(() =>
       renameBranch(repository, branch, newName)
     )
@@ -2552,7 +2536,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
         )
       }
 
-      const gitStore = this.getGitStore(r)
+      const gitStore = this.gitStoreCache.get(r)
 
       await gitStore.performFailableOperation(() =>
         checkoutBranch(r, account, defaultBranch)
@@ -2584,7 +2568,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     account: IGitAccount | null
   ): Promise<void> {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     const { remote } = gitStore
     if (remote === null) {
       this.store.dispatch(
@@ -2777,7 +2761,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     account: IGitAccount | null
   ): Promise<void> {
     return this.withPushPull(repository, async () => {
-      const gitStore = this.getGitStore(repository)
+      const gitStore = this.gitStoreCache.get(repository)
       const remote = gitStore.remote
 
       if (!remote) {
@@ -2946,7 +2930,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       private_
     )
 
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     await gitStore.performFailableOperation(() =>
       addRemote(repository, 'origin', apiRepository.clone_url)
     )
@@ -3028,7 +3012,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     files: ReadonlyArray<WorkingDirectoryFileChange>
   ) {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     await gitStore.discardChanges(files)
 
     return this._refreshRepository(repository)
@@ -3038,7 +3022,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     commit: Commit
   ): Promise<void> {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
 
     await gitStore.undoCommit(commit)
 
@@ -3067,7 +3051,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     return this.withAuthenticatingUser(
       repository,
       async (repository, account) => {
-        const gitStore = this.getGitStore(repository)
+        const gitStore = this.gitStoreCache.get(repository)
         await gitStore.fetchRefspec(account, refspec)
 
         return this._refreshRepository(repository)
@@ -3119,7 +3103,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     remotes?: IRemote[]
   ): Promise<void> {
     await this.withPushPull(repository, async () => {
-      const gitStore = this.getGitStore(repository)
+      const gitStore = this.gitStoreCache.get(repository)
 
       try {
         const fetchWeight = 0.9
@@ -3220,7 +3204,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     message: ICommitMessage | null
   ): Promise<void> {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     return gitStore.setCommitMessage(message)
   }
 
@@ -3270,7 +3254,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     branch: string,
     mergeStatus: MergeResultStatus | null
   ): Promise<void> {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
 
     if (mergeStatus !== null) {
       if (mergeStatus.kind === MergeResultKind.Clean) {
@@ -3293,7 +3277,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     name: string,
     url: string
   ): Promise<void> {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     return gitStore.setRemoteURL(name, url)
   }
 
@@ -3581,7 +3565,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
         // initialize the remotes for this new repository to ensure it can fetch
         // it's GitHub-related details using the GitHub API (if applicable)
-        const gitStore = this.getGitStore(addedRepo)
+        const gitStore = this.gitStoreCache.get(addedRepo)
         await gitStore.loadRemotes()
 
         const [refreshedRepo, usingLFS] = await Promise.all([
@@ -3679,7 +3663,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }
 
     if (!account) {
-      const gitStore = this.getGitStore(repository)
+      const gitStore = this.gitStoreCache.get(repository)
       const remote = gitStore.remote
       if (remote) {
         const hostname = getGenericHostname(remote.url)
@@ -3718,7 +3702,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     commit: Commit
   ): Promise<void> {
     return this.withAuthenticatingUser(repository, async (repo, account) => {
-      const gitStore = this.getGitStore(repo)
+      const gitStore = this.gitStoreCache.get(repo)
 
       await gitStore.revertCommit(repo, commit, account, progress => {
         this.updateRevertProgress(repo, progress)
@@ -3735,7 +3719,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
   ) {
     let url
     if (repository instanceof Repository) {
-      const gitStore = this.getGitStore(repository)
+      const gitStore = this.gitStoreCache.get(repository)
       const { remote } = gitStore
       if (remote === null) {
         return
@@ -3795,7 +3779,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   public _openMergeTool(repository: Repository, path: string): Promise<void> {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     return gitStore.openMergeTool(path)
   }
 
@@ -3992,14 +3976,14 @@ export class AppStore extends TypedBaseStore<IAppState> {
   public async _updateExistingUpstreamRemote(
     repository: Repository
   ): Promise<void> {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     await gitStore.updateExistingUpstreamRemote()
 
     return this._refreshRepository(repository)
   }
 
   private async addUpstreamRemoteIfNeeded(repository: Repository) {
-    const gitStore = this.getGitStore(repository)
+    const gitStore = this.gitStoreCache.get(repository)
     const ignored = await getIgnoreExistingUpstreamRemote(repository)
     if (ignored) {
       return
@@ -4022,7 +4006,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       head.gitHubRepository.cloneURL === gitHubRepository.cloneURL
 
     if (isRefInThisRepo) {
-      const gitStore = this.getGitStore(repository)
+      const gitStore = this.gitStoreCache.get(repository)
       const defaultRemote = gitStore.defaultRemote
       // if we don't have a default remote here, it's probably going
       // to just crash and burn on checkout, but that's okay
@@ -4069,7 +4053,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
       await this._fetchRemote(repository, remote, FetchType.UserInitiatedTask)
 
-      const gitStore = this.getGitStore(repository)
+      const gitStore = this.gitStoreCache.get(repository)
 
       const localBranchName = `pr/${pullRequest.pullRequestNumber}`
       const doesBranchExist =
@@ -4098,7 +4082,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     showCoAuthoredBy: boolean
   ) {
-    this.getGitStore(repository).setShowCoAuthoredBy(showCoAuthoredBy)
+    this.gitStoreCache.get(repository).setShowCoAuthoredBy(showCoAuthoredBy)
     return Promise.resolve()
   }
 
@@ -4112,7 +4096,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     coAuthors: ReadonlyArray<IAuthor>
   ) {
-    this.getGitStore(repository).setCoAuthors(coAuthors)
+    this.gitStoreCache.get(repository).setCoAuthors(coAuthors)
     return Promise.resolve()
   }
 
