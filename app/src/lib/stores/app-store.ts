@@ -6,7 +6,7 @@ import {
   MiddlewareAPI,
   Dispatch,
 } from 'redux'
-import thunk, { ThunkAction, ThunkMiddleware, ThunkDispatch } from 'redux-thunk'
+import thunk, { ThunkAction, ThunkDispatch } from 'redux-thunk'
 
 import { ipcRenderer, remote } from 'electron'
 import { pathExists } from 'fs-extra'
@@ -499,11 +499,16 @@ export type Actions =
   | CloseFoldoutType
   | CloseCurrentFoldout
 
-type AsyncStore = Store<INewAppState, Actions> & {
-  dispatch: ThunkDispatch<INewAppState, undefined, Actions>
+type Services = {
+  repositoryStateCache: RepositoryStateCache
+  gitStoreCache: GitStoreCache
 }
 
-type ThunkResult<R> = ThunkAction<R, INewAppState, undefined, Actions>
+type AsyncStore = Store<INewAppState, Actions> & {
+  dispatch: ThunkDispatch<INewAppState, Services, Actions>
+}
+
+type ThunkResult<R> = ThunkAction<R, INewAppState, Services, Actions>
 
 function theSimplestReducer(
   state: INewAppState = initialState,
@@ -705,10 +710,17 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
     // TODO: global error handling that is redux-thunk compatible?
 
+    const services: Services = {
+      repositoryStateCache: this.repositoryStateCache,
+      gitStoreCache: this.gitStoreCache,
+    }
+
+    const appThunk = thunk.withExtraArgument(services)
+
     this.store = createStore(
       theSimplestReducer,
       applyMiddleware(
-        thunk as ThunkMiddleware<INewAppState, Actions>,
+        appThunk,
         // helper middleware in development to monitor state changes
         logger(),
         // generic crash handling to help catch bad things
