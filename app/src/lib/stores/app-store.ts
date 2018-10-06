@@ -474,15 +474,17 @@ function loadSelectedCommit(repository: Repository): ThunkResult<void> {
     getState,
     { repositoryStateCache, gitStoreCache }
   ) => {
-    const { commitSelection } = repositoryStateCache.get(repository)
-    const currentSHA = commitSelection.sha
-    if (currentSHA == null) {
+    const stateBeforeLoad = repositoryStateCache.get(repository)
+
+    const { commitSelection } = stateBeforeLoad
+    const shaBeforeLoading = commitSelection.sha
+    if (shaBeforeLoading == null) {
       return
     }
 
     const gitStore = gitStoreCache.get(repository)
     const filesInCommit = await gitStore.performFailableOperation(() =>
-      getChangedFiles(repository, currentSHA)
+      getChangedFiles(repository, shaBeforeLoading)
     )
     if (!filesInCommit) {
       return
@@ -491,13 +493,13 @@ function loadSelectedCommit(repository: Repository): ThunkResult<void> {
     // The selection could have changed between when we started loading the
     // changed files and we finished. We might wanna store the changed files per
     // SHA/path.
-    if (currentSHA !== commitSelection.sha) {
+    const stateAfterLoad = repositoryStateCache.get(repository)
+    if (shaBeforeLoading !== stateAfterLoad.commitSelection.sha) {
       return
     }
 
     // if we're selecting a commit for the first time, we should select the
     // first file in the commit and render the diff immediately
-
     const noFileSelected = commitSelection.file === null
 
     const firstFileOrDefault =
