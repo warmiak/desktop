@@ -34,9 +34,9 @@ import { MergeResultKind } from '../models/merge'
 export { ICommitMessage }
 
 export enum SelectionType {
-  Repository,
-  CloningRepository,
-  MissingRepository,
+  Repository = 'Repository',
+  CloningRepository = 'CloningRepository',
+  MissingRepository = 'MissingRepository',
 }
 
 /** The image diff type. */
@@ -356,8 +356,8 @@ export type Foldout =
   | AppMenuFoldout
 
 export enum RepositorySectionTab {
-  Changes,
-  History,
+  Changes = 'Changes',
+  History = 'History',
 }
 
 export interface IRepositoryState {
