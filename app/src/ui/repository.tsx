@@ -265,15 +265,23 @@ export class RepositoryView extends React.Component<
       const selectedCommit =
         sha != null ? this.props.state.commitLookup.get(sha) || null : null
 
-      const { filesInCommit, file, diff } = commitSelection
+      const {
+        filesInCommit,
+        file,
+        diff,
+        isLoadingFiles,
+        isLoadingDiff,
+      } = commitSelection
 
       return (
         <SelectedCommit
           repository={this.props.repository}
           dispatcher={this.props.dispatcher}
           selectedCommit={selectedCommit}
+          isLoadingFiles={isLoadingFiles}
           filesInCommit={filesInCommit}
           selectedFile={file}
+          isLoadingDiff={isLoadingDiff}
           currentDiff={diff}
           emoji={this.props.emoji}
           commitSummaryWidth={this.props.commitSummaryWidth}

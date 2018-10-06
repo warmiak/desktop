@@ -15,14 +15,17 @@ import { IGitHubUser } from '../../lib/databases'
 import { Resizable } from '../resizable'
 import { openFile } from '../../lib/open-file'
 import { IDiff } from '../../models/diff'
+import { Loading } from '../lib/loading'
 
 interface ISelectedCommitProps {
   readonly repository: Repository
   readonly dispatcher: Dispatcher
   readonly emoji: Map<string, string>
   readonly selectedCommit: Commit | null
+  readonly isLoadingFiles: boolean
   readonly filesInCommit: ReadonlyArray<CommittedFileChange>
   readonly selectedFile: CommittedFileChange | null
+  readonly isLoadingDiff: boolean
   readonly currentDiff: IDiff | null
   readonly commitSummaryWidth: number
   readonly gitHubUsers: Map<string, IGitHubUser>
@@ -91,6 +94,14 @@ export class SelectedCommit extends React.Component<
   }
 
   private renderDiff() {
+    if (this.props.isLoadingDiff) {
+      return (
+        <div className="panel blankslate" id="diff">
+          <Loading />
+        </div>
+      )
+    }
+
     const file = this.props.selectedFile
     const diff = this.props.currentDiff
 
@@ -156,6 +167,14 @@ export class SelectedCommit extends React.Component<
   }
 
   private renderFileList() {
+    if (this.props.isLoadingFiles) {
+      return (
+        <div className="fill-window">
+          <Loading />
+        </div>
+      )
+    }
+
     const files = this.props.filesInCommit
     if (files.length === 0) {
       return <div className="fill-window">No files in commit</div>

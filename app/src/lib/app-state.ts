@@ -584,11 +584,17 @@ export interface ICommitSelection {
   /** The commit currently selected in the app */
   readonly sha: string | null
 
+  /** Flag to set to indicate whether the files associated with the selected commit are current */
+  readonly isLoadingFiles: boolean
+
   /** The list of files associated with the current commit */
   readonly filesInCommit: ReadonlyArray<CommittedFileChange>
 
   /** The selected file inside the selected commit */
   readonly file: CommittedFileChange | null
+
+  /** Flag to set to indicate whether the diff for the currently-selected file is current */
+  readonly isLoadingDiff: boolean
 
   /** The diff of the currently-selected file */
   readonly diff: IDiff | null

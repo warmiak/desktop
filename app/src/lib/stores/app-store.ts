@@ -482,10 +482,21 @@ function loadSelectedCommit(repository: Repository): ThunkResult<void> {
       return
     }
 
+    repositoryStateCache.updateCommitSelection(repository, () => ({
+      isLoadingFiles: true,
+    }))
+    dispatch(updateSelectedRepositoryState(repository))
+
     const gitStore = gitStoreCache.get(repository)
     const filesInCommit = await gitStore.performFailableOperation(() =>
       getChangedFiles(repository, shaBeforeLoading)
     )
+
+    repositoryStateCache.updateCommitSelection(repository, () => ({
+      isLoadingFiles: false,
+    }))
+    dispatch(updateSelectedRepositoryState(repository))
+
     if (!filesInCommit) {
       return
     }
@@ -507,19 +518,16 @@ function loadSelectedCommit(repository: Repository): ThunkResult<void> {
         ? filesInCommit[0]
         : commitSelection.file
 
-    const selectionOrFirstFile = {
+    repositoryStateCache.updateCommitSelection(repository, () => ({
       file: firstFileOrDefault,
-      sha: commitSelection.sha,
       filesInCommit,
+      isLoadingFiles: true,
+      isLoadingDiff: true,
       diff: null,
-    }
-
-    repositoryStateCache.update(repository, () => ({
-      commitSelection: selectionOrFirstFile,
     }))
 
-    if (selectionOrFirstFile.file) {
-      dispatch(selectFileInCommit(repository, selectionOrFirstFile.file))
+    if (firstFileOrDefault) {
+      dispatch(selectFileInCommit(repository, firstFileOrDefault))
     }
 
     dispatch(updateSelectedRepositoryState(repository))
@@ -531,15 +539,16 @@ function selectFileInCommit(
   file: CommittedFileChange
 ): ThunkResult<void> {
   return async (dispatch, getState, { repositoryStateCache }) => {
-    repositoryStateCache.update(repository, state => {
-      const { sha, filesInCommit } = state.commitSelection
-      const commitSelection = {
+    repositoryStateCache.updateCommitSelection(repository, state => {
+      const { sha, filesInCommit } = state
+      return {
         sha,
-        filesInCommit,
         file,
+        isLoadingFiles: false,
+        filesInCommit,
+        isLoadingDiff: false,
         diff: null,
       }
-      return { commitSelection }
     })
 
     dispatch(updateSelectedRepositoryState(repository))
@@ -557,7 +566,23 @@ function selectFileInCommit(
       }
     }
 
+    repositoryStateCache.updateCommitSelection(repository, () => {
+      return {
+        isLoadingDiff: true,
+      }
+    })
+
+    dispatch(updateSelectedRepositoryState(repository))
+
     const diff = await getCommitDiff(repository, file, sha)
+
+    repositoryStateCache.updateCommitSelection(repository, () => {
+      return {
+        isLoadingDiff: false,
+      }
+    })
+
+    dispatch(updateSelectedRepositoryState(repository))
 
     const stateAfterLoad = repositoryStateCache.get(repository)
 
@@ -574,15 +599,10 @@ function selectFileInCommit(
       return
     }
 
-    repositoryStateCache.update(repository, state => {
-      const { sha, filesInCommit } = state.commitSelection
-      const commitSelection = {
-        sha,
-        filesInCommit,
-        file,
+    repositoryStateCache.updateCommitSelection(repository, state => {
+      return {
         diff,
       }
-      return { commitSelection }
     })
 
     dispatch(updateSelectedRepositoryState(repository))
@@ -591,26 +611,32 @@ function selectFileInCommit(
 
 function selectCommit(repository: Repository, sha: string): ThunkResult<void> {
   return (dispatch, getState, { repositoryStateCache }) => {
-    repositoryStateCache.update(repository, state => {
-      const commitChanged = state.commitSelection.sha !== sha
+    repositoryStateCache.updateCommitSelection(repository, state => {
+      const commitChanged = state.sha !== sha
       const filesInCommit = commitChanged
         ? new Array<CommittedFileChange>()
-        : state.commitSelection.filesInCommit
-      const file = commitChanged ? null : state.commitSelection.file
-      const commitSelection = { sha, file, diff: null, filesInCommit }
-      return { commitSelection }
+        : state.filesInCommit
+      const file = commitChanged ? null : state.file
+      return {
+        sha,
+        file,
+        isLoadingFiles: commitChanged,
+        filesInCommit,
+        isLoadingDiff: commitChanged,
+        diff: null,
+      }
     })
   }
 }
 function clearSelectedCommit(repository: Repository): ThunkResult<void> {
   return (dispatch, getState, { repositoryStateCache }) => {
-    repositoryStateCache.update(repository, () => ({
-      commitSelection: {
-        sha: null,
-        file: null,
-        filesInCommit: [],
-        diff: null,
-      },
+    repositoryStateCache.updateCommitSelection(repository, () => ({
+      sha: null,
+      file: null,
+      isLoadingFiles: true,
+      filesInCommit: [],
+      isLoadingDiff: true,
+      diff: null,
     }))
     dispatch(updateSelectedRepositoryState(repository))
   }
@@ -1292,14 +1318,20 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     sha: string
   ): Promise<void> {
-    this.repositoryStateCache.update(repository, state => {
-      const commitChanged = state.commitSelection.sha !== sha
+    this.repositoryStateCache.updateCommitSelection(repository, state => {
+      const commitChanged = state.sha !== sha
       const filesInCommit = commitChanged
         ? new Array<CommittedFileChange>()
-        : state.commitSelection.filesInCommit
-      const file = commitChanged ? null : state.commitSelection.file
-      const commitSelection = { sha, file, diff: null, filesInCommit }
-      return { commitSelection }
+        : state.filesInCommit
+      const file = commitChanged ? null : state.file
+      return {
+        sha,
+        file,
+        diff: null,
+        filesInCommit,
+        isLoadingFiles: commitChanged,
+        isLoadingDiff: commitChanged,
+      }
     })
     this.store.dispatch(updateSelectedRepositoryState(repository))
   }
