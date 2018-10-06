@@ -585,7 +585,7 @@ export interface ICommitSelection {
   readonly sha: string | null
 
   /** The list of files associated with the current commit */
-  readonly changedFiles: ReadonlyArray<CommittedFileChange>
+  readonly filesInCommit: ReadonlyArray<CommittedFileChange>
 
   /** The selected file inside the selected commit */
   readonly file: CommittedFileChange | null

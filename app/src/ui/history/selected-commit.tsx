@@ -21,7 +21,7 @@ interface ISelectedCommitProps {
   readonly dispatcher: Dispatcher
   readonly emoji: Map<string, string>
   readonly selectedCommit: Commit | null
-  readonly changedFiles: ReadonlyArray<CommittedFileChange>
+  readonly filesInCommit: ReadonlyArray<CommittedFileChange>
   readonly selectedFile: CommittedFileChange | null
   readonly currentDiff: IDiff | null
   readonly commitSummaryWidth: number
@@ -97,7 +97,7 @@ export class SelectedCommit extends React.Component<
     if (file == null || diff == null) {
       // don't show both 'empty' messages
       const message =
-        this.props.changedFiles.length === 0 ? '' : 'No file selected'
+        this.props.filesInCommit.length === 0 ? '' : 'No file selected'
 
       return (
         <div className="panel blankslate" id="diff">
@@ -122,7 +122,7 @@ export class SelectedCommit extends React.Component<
     return (
       <CommitSummary
         commit={commit}
-        files={this.props.changedFiles}
+        files={this.props.filesInCommit}
         emoji={this.props.emoji}
         repository={this.props.repository}
         gitHubUsers={this.props.gitHubUsers}
@@ -156,7 +156,7 @@ export class SelectedCommit extends React.Component<
   }
 
   private renderFileList() {
-    const files = this.props.changedFiles
+    const files = this.props.filesInCommit
     if (files.length === 0) {
       return <div className="fill-window">No files in commit</div>
     }

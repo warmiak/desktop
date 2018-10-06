@@ -91,7 +91,7 @@ function getInitialRepositoryState(): IRepositoryState {
     commitSelection: {
       sha: null,
       file: null,
-      changedFiles: new Array<CommittedFileChange>(),
+      filesInCommit: new Array<CommittedFileChange>(),
       diff: null,
     },
     changesState: {
