@@ -92,6 +92,7 @@ import {
   ComparisonMode,
   SuccessfulMergeBannerState,
   INewAppState,
+  IOldAppState,
 } from '../app-state'
 import { IGitHubUser } from '../databases/github-user-database'
 import {
@@ -184,12 +185,22 @@ import {
 
 // start new redux code
 
-const initialState: INewAppState = {}
+function getTitlebarStyle(showWelcomeFlow: boolean) {
+  return showWelcomeFlow ? 'light' : 'dark'
+}
+
+const initialState: INewAppState = {
+  repositoryFilterText: '',
+  showWelcomeFlow: false,
+  titleBarStyle: getTitlebarStyle(false),
+  windowState: 'hidden',
+}
 
 enum ActionTypes {
-  ShowWelcomeFlowAction = 'ShowWelcomeFlowAction',
+  ShowWelcomeFlow = 'ShowWelcomeFlow',
   SetRepositoryFilterText = 'SetRepositoryFilterText',
   AccountsLoaded = 'AccountsLoaded',
+  SetWindowState = 'SetWindowState',
 }
 
 type SetFilterRepositoryText = {
@@ -202,36 +213,33 @@ function setRepositoryFilterText(filterText: string): SetFilterRepositoryText {
 }
 
 type ShowWelcomeFlowAction = {
-  type: ActionTypes.ShowWelcomeFlowAction
+  type: ActionTypes.ShowWelcomeFlow
   show: boolean
 }
 
 function showWelcomeFlow(show: boolean): ShowWelcomeFlowAction {
-  return { type: ActionTypes.ShowWelcomeFlowAction, show }
+  return { type: ActionTypes.ShowWelcomeFlow, show }
 }
 
-type AccountsLoaded = {
-  type: ActionTypes.AccountsLoaded
-  accounts: ReadonlyArray<Account>
+type SetWindowStateAction = {
+  type: ActionTypes.SetWindowState
+  state: WindowState
 }
 
-function accountsLoaded(accounts: ReadonlyArray<Account>): AccountsLoaded {
-  return { type: ActionTypes.AccountsLoaded, accounts }
+function setWindowState(state: WindowState): SetWindowStateAction {
+  return { type: ActionTypes.SetWindowState, state }
 }
 
-function loadAccounts(accountsStore: AccountsStore): ThunkResult<void> {
-  return async dispatch => {
-    const accounts = await accountsStore.getAll()
-    dispatch(accountsLoaded(accounts))
-  }
-}
-
-type Actions = ShowWelcomeFlowAction | SetFilterRepositoryText | AccountsLoaded
+type Actions =
+  | ShowWelcomeFlowAction
+  | SetFilterRepositoryText
+  | SetWindowStateAction
 
 type AsyncStore = Store<INewAppState, Actions> & {
   dispatch: ThunkDispatch<INewAppState, undefined, Actions>
 }
 
+//@ts-ignore: this will be used again in the future
 type ThunkResult<R> = ThunkAction<R, INewAppState, undefined, Actions>
 
 function theSimplestReducer(
@@ -239,21 +247,16 @@ function theSimplestReducer(
   action: Actions
 ): INewAppState {
   switch (action.type) {
-    case ActionTypes.ShowWelcomeFlowAction:
+    case ActionTypes.ShowWelcomeFlow:
       return {
         ...state,
         showWelcomeFlow: action.show,
-        selectedTheme: action.show
-          ? ApplicationTheme.Light
-          : ApplicationTheme.Dark,
+        titleBarStyle: getTitlebarStyle(action.show),
       }
     case ActionTypes.SetRepositoryFilterText:
       return { ...state, repositoryFilterText: action.filterText }
-    case ActionTypes.AccountsLoaded: {
-      // TODO: this is trickier to port over because we have lots
-      // of actions that rely on this.accounts
-      return state
-    }
+    case ActionTypes.SetWindowState:
+      return { ...state, windowState: action.state }
     default:
       return state
   }
@@ -312,8 +315,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
   /** The ahead/behind updater or the currently selected repository */
   private currentAheadBehindUpdater: AheadBehindUpdater | null = null
 
-  private showWelcomeFlow = false
-  private focusCommitMessage = false
   private currentPopup: Popup | null = null
   private currentFoldout: Foldout | null = null
   private errors: ReadonlyArray<Error> = new Array<Error>()
@@ -348,7 +349,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
   private sidebarWidth: number = defaultSidebarWidth
   private commitSummaryWidth: number = defaultCommitSummaryWidth
-  private windowState: WindowState
+
   private windowZoomFactor: number = 1
   private isUpdateAvailableBannerVisible: boolean = false
   private successfulMergeBannerState: SuccessfulMergeBannerState = null
@@ -392,8 +393,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
   ) {
     super()
 
-    this.showWelcomeFlow = !hasShownWelcomeFlow()
-
     this.gitStoreCache = new GitStoreCache(
       shell,
       (repo, store) => this.onGitStoreUpdated(repo, store),
@@ -402,7 +401,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
     )
 
     const window = remote.getCurrentWindow()
-    this.windowState = getWindowState(window)
 
     window.webContents.getZoomFactor(factor => {
       this.onWindowZoomFactorChanged(factor)
@@ -418,14 +416,17 @@ export class AppStore extends TypedBaseStore<IAppState> {
     )
 
     this.store.subscribe(() => this.emitUpdate())
+
+    const initialWelcomeFlowState = !hasShownWelcomeFlow()
+    this.store.dispatch(showWelcomeFlow(initialWelcomeFlowState))
+    this.store.dispatch(setWindowState(getWindowState(window)))
   }
 
   private wireupIpcEventHandlers(window: Electron.BrowserWindow) {
     ipcRenderer.on(
       'window-state-changed',
       (event: Electron.IpcMessageEvent, args: any[]) => {
-        this.windowState = getWindowState(window)
-        this.emitUpdate()
+        this.store.dispatch(setWindowState(getWindowState(window)))
       }
     )
 
@@ -460,7 +461,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.signInStore.onDidAuthenticate((account, method) => {
       this._addAccount(account)
 
-      if (this.showWelcomeFlow) {
+      if (this.store.getState().showWelcomeFlow) {
         this.statsStore.recordWelcomeWizardSignInMethod(method)
       }
     })
@@ -506,7 +507,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     // If the window is hidden then we won't get an animation frame, but there
     // may still be work we wanna do in response to the state change. So
     // immediately emit the update.
-    if (this.windowState === 'hidden') {
+    if (this.store.getState().windowState === 'hidden') {
       this.emitUpdateNow()
       return
     }
@@ -574,14 +575,15 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   public getState(): IAppState {
-    return {
+    const newState = this.store.getState()
+
+    const oldState: IOldAppState = {
       accounts: this.accounts,
       repositories: [
         ...this.repositories,
         ...this.cloningRepositoriesStore.repositories,
       ],
       localRepositoryStateLookup: this.localRepositoryStateLookup,
-      windowState: this.windowState,
       windowZoomFactor: this.windowZoomFactor,
       appIsFocused: this.appIsFocused,
       selectedState: this.getSelectedState(),
@@ -589,13 +591,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
       currentPopup: this.currentPopup,
       currentFoldout: this.currentFoldout,
       errors: this.errors,
-      showWelcomeFlow: this.showWelcomeFlow,
-      focusCommitMessage: this.focusCommitMessage,
       emoji: this.emoji,
       sidebarWidth: this.sidebarWidth,
       commitSummaryWidth: this.commitSummaryWidth,
       appMenuState: this.appMenu ? this.appMenu.openMenus : [],
-      titleBarStyle: this.showWelcomeFlow ? 'light' : 'dark',
       highlightAccessKeys: this.highlightAccessKeys,
       isUpdateAvailableBannerVisible: this.isUpdateAvailableBannerVisible,
       successfulMergeBannerState: this.successfulMergeBannerState,
@@ -611,6 +610,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
       selectedTheme: this.selectedTheme,
       apiRepositories: this.apiRepositoriesStore.getState(),
     }
+
+    return { ...oldState, ...newState }
   }
 
   private onGitStoreUpdated(repository: Repository, gitStore: GitStore) {
@@ -1102,9 +1103,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
-  public async _setRepositoryFilterText(text: string): Promise<void> {
-    this.repositoryFilterText = text
-    this.emitUpdate()
+  public _setRepositoryFilterText(text: string) {
+    this.store.dispatch(setRepositoryFilterText(text))
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
@@ -3047,8 +3047,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   public _endWelcomeFlow(): Promise<void> {
-    this.showWelcomeFlow = false
-    this.emitUpdate()
+    this.store.dispatch(showWelcomeFlow(false))
 
     markWelcomeFlowComplete()
 

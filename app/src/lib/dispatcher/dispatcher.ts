@@ -168,8 +168,8 @@ export class Dispatcher {
   }
 
   /** Set the repository filter text. */
-  public setRepositoryFilterText(text: string): Promise<void> {
-    return this.appStore._setRepositoryFilterText(text)
+  public setRepositoryFilterText(text: string) {
+    this.appStore._setRepositoryFilterText(text)
   }
 
   /** Set the branch filter text. */

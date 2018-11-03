@@ -55,7 +55,18 @@ export type PossibleSelections =
 
 export type IAppState = INewAppState & IOldAppState
 
-export interface INewAppState {}
+export interface INewAppState {
+  readonly repositoryFilterText: string
+  readonly showWelcomeFlow: boolean
+
+  /** Whether we should hide the toolbar (and show inverted window controls) */
+  readonly titleBarStyle: 'light' | 'dark'
+
+  /**
+   * The current state of the window, ie maximized, minimized full-screen etc.
+   */
+  readonly windowState: WindowState
+}
 
 /** All of the shared app state. */
 export interface IOldAppState {
@@ -82,11 +93,6 @@ export interface IOldAppState {
   readonly signInState: SignInState | null
 
   /**
-   * The current state of the window, ie maximized, minimized full-screen etc.
-   */
-  readonly windowState: WindowState
-
-  /**
    * The current zoom factor of the window represented as a fractional number
    * where 1 equals 100% (ie actual size) and 2 represents 200%.
    */
@@ -98,8 +104,6 @@ export interface IOldAppState {
    */
   readonly appIsFocused: boolean
 
-  readonly showWelcomeFlow: boolean
-  readonly focusCommitMessage: boolean
   readonly currentPopup: Popup | null
   readonly currentFoldout: Foldout | null
 
@@ -144,9 +148,6 @@ export interface IOldAppState {
 
   /** The width of the commit summary column in the history view */
   readonly commitSummaryWidth: number
-
-  /** Whether we should hide the toolbar (and show inverted window controls) */
-  readonly titleBarStyle: 'light' | 'dark'
 
   /**
    * Used to highlight access keys throughout the app when the
