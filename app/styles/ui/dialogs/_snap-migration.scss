@@ -1,0 +1,29 @@
+#snap-migration {
+  pre.commands {
+    flex-shrink: 1;
+    flex-grow: 1;
+
+    word-wrap: break-word;
+    white-space: pre-wrap;
+    font-family: var(--font-family-monospace);
+    background: rgba($blue-100, 0.3);
+    color: $gray-900;
+    padding: var(--spacing);
+    border-radius: var(--border-radius);
+
+    user-select: text;
+    cursor: text;
+
+    overflow: auto;
+
+    margin: 0 0 var(--spacing-double) 0;
+  }
+}
+
+body.theme-dark {
+  #snap-migration {
+    pre.commands {
+      color: var(--text-color);
+    }
+  }
+}
