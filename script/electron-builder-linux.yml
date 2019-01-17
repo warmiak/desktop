@@ -38,21 +38,9 @@ rpm:
     # keytar dependencies
     - libsecret
 snap:
-  confinement: 'strict'
+  confinement: 'classic'
   stagePackages:
     - default
     - libcurl3
     - openssh-client
     - gettext
-  plugs:
-    - browser-support
-    - desktop
-    - desktop-legacy
-    - gsettings
-    - home
-    - network
-    - opengl
-    - password-manager-service
-    - ssh-keys
-    - unity7
-    - wayland
